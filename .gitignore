@@ -1,0 +1,115 @@
+# Dependencies
+
+node_modules/
+.pnpm-store/
+.yarn/
+.yarn-cache/
+bun.lockb
+
+# Build outputs
+
+dist/
+build/
+out/
+.vite/
+.cache/
+coverage/
+
+# Tauri / Rust build files
+
+src-tauri/target/
+src-tauri/Cargo.lock
+
+# Tauri generated bundles / installers
+
+src-tauri/target/release/bundle/
+src-tauri/target/debug/bundle/
+
+# Environment variables
+
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+
+# SQLite database files
+
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Local backups
+
+backups/
+backup/
+*.bak
+*.backup
+
+# Logs
+
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+bun-debug.log*
+
+# OS files
+
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE / Editor files
+
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# TypeScript
+
+*.tsbuildinfo
+
+# Testing
+
+playwright-report/
+test-results/
+.nyc_output/
+
+# Temporary files
+
+tmp/
+temp/
+*.tmp
+
+# Generated reports / exports
+
+exports/
+reports/generated/
+invoices/generated/
+
+# Local app data
+
+app-data/
+local-data/
+storage/
+
+# Secrets / certificates / keys
+
+*.pem
+*.key
+*.crt
+*.pfx
+*.p12
+
+# Package manager files usually kept only if intentionally used
+
+package-lock.json
+yarn.lock
+pnpm-lock.yaml

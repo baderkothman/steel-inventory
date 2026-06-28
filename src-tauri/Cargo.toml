@@ -1,0 +1,32 @@
+[package]
+name = "steel_inventory"
+version = "0.1.0"
+description = "Offline-first steel inventory, invoices, expenses, and reporting desktop system"
+authors = ["Steel Inventory"]
+edition = "2021"
+rust-version = "1.80"
+
+[lib]
+name = "steel_inventory_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+argon2 = "0.5"
+chrono = { version = "0.4", features = ["serde"] }
+directories = "5"
+rand_core = { version = "0.6", features = ["std"] }
+rusqlite = { version = "0.32", features = ["bundled", "backup"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

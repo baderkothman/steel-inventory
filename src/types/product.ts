@@ -1,0 +1,65 @@
+export type Product = {
+  id: number;
+  sku: string;
+  category_id: number;
+  category_name: string;
+  name: string;
+  product_type: string;
+  material: string;
+  shape: string;
+  finish: string;
+  size_label?: string | null;
+  width_mm?: number | null;
+  height_mm?: number | null;
+  diameter_mm?: number | null;
+  thickness_mm?: number | null;
+  length_mm?: number | null;
+  unit: string;
+  description?: string | null;
+  is_active: boolean;
+  cost_price_cents: number;
+  selling_price_cents: number;
+  wholesale_price_cents: number;
+  current_quantity: number;
+  minimum_quantity: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ProductPayload = {
+  sku?: string | null;
+  category_id: number;
+  name: string;
+  product_type: string;
+  material: string;
+  shape: string;
+  finish: string;
+  size_label: string;
+  width_mm?: number | null;
+  height_mm?: number | null;
+  diameter_mm?: number | null;
+  thickness_mm?: number | null;
+  length_mm?: number | null;
+  unit: string;
+  description?: string | null;
+  cost_price_cents: number;
+  selling_price_cents: number;
+  wholesale_price_cents?: number | null;
+  minimum_quantity: number;
+  initial_quantity?: number | null;
+};
+
+export type InventoryTransaction = {
+  id: number;
+  product_id: number;
+  product_name: string;
+  sku: string;
+  transaction_type: string;
+  reference_type: string;
+  reference_id?: number | null;
+  quantity_in: number;
+  quantity_out: number;
+  unit_cost_cents?: number | null;
+  notes?: string | null;
+  created_at: string;
+};
