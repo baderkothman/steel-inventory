@@ -43,8 +43,8 @@ src-tauri/target/debug/bundle/
 
 # Local backups
 
-backups/
-backup/
+/backups/
+/backup/
 *.bak
 *.backup
 
