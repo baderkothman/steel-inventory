@@ -196,6 +196,25 @@ jobs:
           TAURI_WINDOWS_SIGNTOOL_PATH: ${{ secrets.TAURI_WINDOWS_SIGNTOOL_PATH }}
         run: |
           set -euo pipefail
+          for optional_secret in \
+            TAURI_SIGNING_PRIVATE_KEY \
+            TAURI_SIGNING_PRIVATE_KEY_PASSWORD \
+            APPLE_CERTIFICATE \
+            APPLE_CERTIFICATE_PASSWORD \
+            APPLE_SIGNING_IDENTITY \
+            APPLE_ID \
+            APPLE_PASSWORD \
+            APPLE_TEAM_ID \
+            APPLE_API_KEY \
+            APPLE_API_ISSUER \
+            APPLE_API_KEY_PATH \
+            TAURI_WINDOWS_SIGNTOOL_PATH
+          do
+            if [[ -z "${!optional_secret:-}" ]]; then
+              unset "${optional_secret}"
+            fi
+          done
+
           args=()
 
           if [[ -n "${{ matrix.rust_target }}" ]]; then
