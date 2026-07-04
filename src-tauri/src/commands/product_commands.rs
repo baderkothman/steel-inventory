@@ -1,11 +1,24 @@
 use tauri::State;
 
 use crate::{
-    models::{InventoryTransactionRow, MovementFilters, ProductFilters, ProductPayload, ProductRow, StockAdjustmentPayload},
+    models::{
+        InventoryTransactionRow, MovementFilters, ProductFilters, ProductPayload, ProductRow,
+        StockAdjustmentPayload, SupplierVariantRow, VariantFilters,
+    },
     services::{inventory_service, product_service},
     state::AppState,
     utils::errors::AppError,
 };
+
+#[tauri::command]
+pub fn list_supplier_variants(
+    state: State<'_, AppState>,
+    filters: VariantFilters,
+) -> Result<Vec<SupplierVariantRow>, AppError> {
+    state.require_user_id()?;
+    let conn = state.open_conn()?;
+    product_service::list_supplier_variants(&conn, filters)
+}
 
 #[tauri::command]
 pub fn create_product(

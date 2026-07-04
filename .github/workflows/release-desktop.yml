@@ -1,0 +1,328 @@
+name: Release Desktop
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to build and publish, for example v1.0.0"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-desktop-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: windows-x64
+            runner: windows-latest
+            os_family: windows
+            rust_target: ""
+            bundle_dir: src-tauri/target/release/bundle
+            asset_prefix: windows-x64
+          - label: macos-arm64
+            runner: macos-latest
+            os_family: macos
+            rust_target: aarch64-apple-darwin
+            bundle_dir: src-tauri/target/aarch64-apple-darwin/release/bundle
+            asset_prefix: macos-arm64
+          - label: macos-x64
+            runner: macos-latest
+            os_family: macos
+            rust_target: x86_64-apple-darwin
+            bundle_dir: src-tauri/target/x86_64-apple-darwin/release/bundle
+            asset_prefix: macos-x64
+
+    steps:
+      - name: Validate release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+(\.[0-9]+){2}([-.+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag must look like v1.0.0, v1.0.0-beta.1, or v1.0.0+build. Got: ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Detect package manager
+        id: package-manager
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f package-lock.json ]]; then
+            echo "manager=npm" >> "${GITHUB_OUTPUT}"
+          elif [[ -f pnpm-lock.yaml ]]; then
+            echo "manager=pnpm" >> "${GITHUB_OUTPUT}"
+          elif [[ -f yarn.lock ]]; then
+            echo "manager=yarn" >> "${GITHUB_OUTPUT}"
+          elif [[ -f bun.lockb || -f bun.lock ]]; then
+            echo "manager=bun" >> "${GITHUB_OUTPUT}"
+          else
+            echo "No supported lockfile found. Commit package-lock.json, pnpm-lock.yaml, yarn.lock, bun.lock, or bun.lockb." >&2
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Set up Bun
+        if: steps.package-manager.outputs.manager == 'bun'
+        uses: oven-sh/setup-bun@v2
+
+      - name: Enable Corepack
+        if: steps.package-manager.outputs.manager == 'pnpm' || steps.package-manager.outputs.manager == 'yarn'
+        shell: bash
+        run: corepack enable
+
+      - name: Install Rust stable
+        if: matrix.rust_target == ''
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Rust stable with target
+        if: matrix.rust_target != ''
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-${{ matrix.label }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.label }}-cargo-
+            ${{ runner.os }}-cargo-
+
+      - name: Install frontend dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ steps.package-manager.outputs.manager }}" in
+            npm)
+              npm ci
+              ;;
+            pnpm)
+              pnpm install --frozen-lockfile
+              ;;
+            yarn)
+              if [[ -f .yarnrc.yml ]]; then
+                yarn install --immutable
+              else
+                yarn install --frozen-lockfile
+              fi
+              ;;
+            bun)
+              bun install --frozen-lockfile
+              ;;
+          esac
+
+      - name: Configure Apple API key notarization
+        if: matrix.os_family == 'macos'
+        shell: bash
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${APPLE_API_KEY_P8_BASE64:-}" ]]; then
+            echo "No APPLE_API_KEY_P8_BASE64 secret configured; skipping App Store Connect API key setup."
+            exit 0
+          fi
+
+          if [[ -z "${APPLE_API_KEY:-}" ]]; then
+            echo "APPLE_API_KEY_P8_BASE64 is set, but APPLE_API_KEY is missing." >&2
+            exit 1
+          fi
+
+          api_key_path="${RUNNER_TEMP}/AuthKey_${APPLE_API_KEY}.p8"
+          printf '%s' "${APPLE_API_KEY_P8_BASE64}" | base64 --decode > "${api_key_path}"
+          chmod 600 "${api_key_path}"
+          echo "APPLE_API_KEY_PATH=${api_key_path}" >> "${GITHUB_ENV}"
+
+      - name: Build Tauri bundle
+        shell: bash
+        env:
+          # Tauri updater signing. This project is not currently configured with
+          # bundle.createUpdaterArtifacts, so these secrets are optional and unused
+          # until updater artifacts are enabled in src-tauri/tauri.conf.json.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+          # macOS Developer ID signing/notarization. Leave unset for unsigned
+          # builds; the workflow applies ad-hoc signing on macOS when no Apple
+          # certificate or explicit signing identity is provided.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+
+          # Windows production signing is intentionally not forced. If you add
+          # Tauri Windows signing configuration such as a signCommand, provide
+          # the required certificate, token, or cloud signing credentials as
+          # GitHub secrets and reference them here.
+          TAURI_WINDOWS_SIGNTOOL_PATH: ${{ secrets.TAURI_WINDOWS_SIGNTOOL_PATH }}
+        run: |
+          set -euo pipefail
+          args=()
+
+          if [[ -n "${{ matrix.rust_target }}" ]]; then
+            args+=(--target "${{ matrix.rust_target }}")
+          fi
+
+          if [[ "${{ matrix.os_family }}" == "macos" && -z "${APPLE_CERTIFICATE:-}" && -z "${APPLE_SIGNING_IDENTITY:-}" ]]; then
+            args+=(--config '{"bundle":{"macOS":{"signingIdentity":"-"}}}')
+            echo "No Apple signing certificate configured; building macOS artifacts with ad-hoc signing."
+          fi
+
+          case "${{ steps.package-manager.outputs.manager }}" in
+            npm)
+              npm run tauri:build -- "${args[@]}"
+              ;;
+            pnpm)
+              pnpm run tauri:build -- "${args[@]}"
+              ;;
+            yarn)
+              yarn run tauri:build "${args[@]}"
+              ;;
+            bun)
+              bun run tauri:build -- "${args[@]}"
+              ;;
+          esac
+
+      - name: Collect release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle_dir="${{ matrix.bundle_dir }}"
+          asset_prefix="${{ matrix.asset_prefix }}"
+          mkdir -p release-assets
+
+          if [[ ! -d "${bundle_dir}" ]]; then
+            echo "Expected bundle directory was not created: ${bundle_dir}" >&2
+            exit 1
+          fi
+
+          while IFS= read -r -d '' app_dir; do
+            app_name="$(basename "${app_dir}")"
+            tar -czf "release-assets/${asset_prefix}-${app_name}.tar.gz" -C "$(dirname "${app_dir}")" "${app_name}"
+          done < <(find "${bundle_dir}" -type d -name "*.app" -print0)
+
+          while IFS= read -r -d '' file; do
+            base="$(basename "${file}")"
+            cp "${file}" "release-assets/${asset_prefix}-${base}"
+          done < <(find "${bundle_dir}" -type f \( \
+            -name "*.dmg" -o \
+            -name "*.msi" -o \
+            -name "*.msix" -o \
+            -name "*.exe" -o \
+            -name "*.zip" -o \
+            -name "*.tar.gz" -o \
+            -name "*.sig" -o \
+            -name "*.json" \
+          \) -print0)
+
+          if ! find release-assets -type f -print -quit | grep -q .; then
+            echo "No release assets were collected from ${bundle_dir}" >&2
+            find "${bundle_dir}" -print
+            exit 1
+          fi
+
+          find release-assets -type f -print | sort
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.label }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+
+    steps:
+      - name: Validate release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+(\.[0-9]+){2}([-.+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag must look like v1.0.0, v1.0.0-beta.1, or v1.0.0+build. Got: ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+
+      - name: Download built artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: List release assets
+        shell: bash
+        run: find release-assets -type f -print | sort
+
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release edit "${RELEASE_TAG}" \
+              --title "${RELEASE_TAG}" \
+              --notes "Desktop release ${RELEASE_TAG}"
+          else
+            gh release create "${RELEASE_TAG}" \
+              --title "${RELEASE_TAG}" \
+              --notes "Desktop release ${RELEASE_TAG}"
+          fi
+
+      - name: Upload assets to GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mapfile -d '' files < <(find release-assets -type f -print0)
+          if [[ "${#files[@]}" -eq 0 ]]; then
+            echo "No release assets found to upload." >&2
+            exit 1
+          fi
+          gh release upload "${RELEASE_TAG}" "${files[@]}" --clobber

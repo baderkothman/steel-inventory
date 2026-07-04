@@ -281,6 +281,54 @@ pub fn seed_demo_data(conn: &mut Connection, user_id: i64) -> Result<DemoSeedRes
         &now,
     )?;
 
+    // Assign seeded products to their supplier and populate spec_key (matches migration 003).
+    tx.execute(
+        "UPDATE products SET supplier_id = ?1 WHERE supplier_id IS NULL AND sku LIKE 'DEMO-%'",
+        params![supplier_metal],
+    )?;
+    tx.execute(
+        "UPDATE products
+         SET spec_key = upper(
+                 trim(product_type) || '|' || trim(material) || '|' || trim(shape) || '|' ||
+                 trim(finish) || '|' || COALESCE(trim(size_label), '') || '|' ||
+                 COALESCE(CAST(thickness_mm AS TEXT), ''))
+         WHERE (spec_key = '' OR spec_key IS NULL) AND sku LIKE 'DEMO-%'",
+        [],
+    )?;
+
+    // Same round-pipe specification from a second supplier at a lower price,
+    // so the cheapest-supplier comparison has demo data out of the box.
+    let p_pipe_round_alt = insert_product(
+        &tx,
+        "DEMO-BSP-RD-30-1.5-ALT",
+        7,
+        "Demo Black Round Pipe 30mm 1.5mm",
+        "pipe",
+        "steel",
+        "round",
+        "black",
+        Some("30mm"),
+        None,
+        None,
+        Some(30.0),
+        Some(1.5),
+        Some(6000.0),
+        "piece",
+        Some("Alternative supplier variant for cheapest comparison."),
+        3500,
+        4900,
+        4600,
+        12.0,
+        &now,
+    )?;
+    tx.execute(
+        "UPDATE products
+         SET supplier_id = ?1,
+             spec_key = (SELECT spec_key FROM products WHERE id = ?2)
+         WHERE id = ?3",
+        params![supplier_tools, p_pipe_round, p_pipe_round_alt],
+    )?;
+
     insert_purchase(
         &tx,
         user_id,

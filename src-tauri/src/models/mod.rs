@@ -51,6 +51,10 @@ pub struct ProductRow {
     pub sku: String,
     pub category_id: i64,
     pub category_name: String,
+    pub supplier_id: Option<i64>,
+    pub supplier_name: String,
+    pub spec_key: String,
+    pub location: Option<String>,
     pub name: String,
     pub product_type: String,
     pub material: String,
@@ -78,6 +82,8 @@ pub struct ProductRow {
 pub struct ProductPayload {
     pub sku: Option<String>,
     pub category_id: i64,
+    pub supplier_id: Option<i64>,
+    pub location: Option<String>,
     pub name: String,
     pub product_type: String,
     pub material: String,
@@ -102,7 +108,68 @@ pub struct ProductPayload {
 pub struct ProductFilters {
     pub search: Option<String>,
     pub category_id: Option<i64>,
+    pub supplier_id: Option<i64>,
     pub active_only: Option<bool>,
+}
+
+/// One supplier's variant of a shared product specification, for cheapest comparison.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SupplierVariantRow {
+    pub spec_key: String,
+    pub product_id: i64,
+    pub sku: String,
+    pub name: String,
+    pub supplier_id: Option<i64>,
+    pub supplier_name: String,
+    pub category_name: String,
+    pub unit: String,
+    pub location: Option<String>,
+    pub cost_price_cents: i64,
+    pub selling_price_cents: i64,
+    pub current_quantity: f64,
+    pub is_active: bool,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct VariantFilters {
+    pub search: Option<String>,
+    pub category_id: Option<i64>,
+    pub in_stock_only: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct SettlementPaymentPayload {
+    pub supplier_id: i64,
+    pub period_start: String,
+    pub period_end: String,
+    pub amount_cents: i64,
+    pub status: String,
+    pub payment_date: String,
+    pub reference: Option<String>,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettlementPaymentRow {
+    pub id: i64,
+    pub supplier_id: i64,
+    pub supplier_name: String,
+    pub period_start: String,
+    pub period_end: String,
+    pub amount_cents: i64,
+    pub currency: String,
+    pub status: String,
+    pub payment_date: String,
+    pub reference: Option<String>,
+    pub notes: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct SettlementFilters {
+    pub date_from: Option<String>,
+    pub date_to: Option<String>,
+    pub supplier_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -277,19 +277,20 @@ function InvoiceDialog({
             <TextField label="Invoice number" value={form?.invoice_number ?? ""} onChange={(e) => onChange(form && { ...form, invoice_number: e.target.value })} helperText="Leave blank for automatic numbering" />
             <TextField label="Invoice date" type="date" value={form?.invoice_date ?? today()} onChange={(e) => onChange(form && { ...form, invoice_date: e.target.value })} />
             <TextField select label="Add product" value="" onChange={(e) => addItem(products.find((product) => product.id === Number(e.target.value)))}>
-              {products.map((product) => <MenuItem key={product.id} value={product.id}>{product.sku} - {product.name}</MenuItem>)}
+              {products.map((product) => <MenuItem key={product.id} value={product.id}>{product.supplier_name} — {product.name} ({product.sku})</MenuItem>)}
             </TextField>
           </Box>
 
           <Paper variant="outlined">
             {form?.items.length ? (
               <Table size="small">
-                <TableHead><TableRow><TableCell>Product</TableCell><TableCell align="right">Available</TableCell><TableCell align="right">Quantity</TableCell><TableCell align="right">Unit {kind === "purchase" ? "cost" : "price"}</TableCell><TableCell align="right">Row total</TableCell><TableCell /></TableRow></TableHead>
+                <TableHead><TableRow><TableCell>Supplier</TableCell><TableCell>Product</TableCell><TableCell align="right">Available</TableCell><TableCell align="right">Quantity</TableCell><TableCell align="right">Unit {kind === "purchase" ? "cost" : "price"}</TableCell><TableCell align="right">Row total</TableCell><TableCell /></TableRow></TableHead>
                 <TableBody>{form.items.map((item, index) => {
                   const product = products.find((candidate) => candidate.id === item.product_id);
                   const rowTotal = Number(item.quantity || 0) * Number(item.unit_price || 0);
                   return (
                     <TableRow key={`${item.product_id}-${index}`}>
+                      <TableCell>{product?.supplier_name}</TableCell>
                       <TableCell>{product?.sku} - {product?.name}</TableCell>
                       <TableCell align="right">{kind === "sales" ? quantity(product?.current_quantity) : "-"}</TableCell>
                       <TableCell align="right"><TextField type="number" value={item.quantity} onChange={(e) => updateItem(index, { ...item, quantity: e.target.value })} sx={{ width: 96 }} /></TableCell>

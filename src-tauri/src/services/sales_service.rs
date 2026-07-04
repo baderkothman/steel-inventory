@@ -246,10 +246,12 @@ pub fn get_sales_invoice(conn: &Connection, id: i64) -> Result<InvoiceDetail, Ap
             other => other.into(),
         })?;
     let mut stmt = conn.prepare(
-        "SELECT sii.id, sii.product_id, p.sku, p.name, sii.quantity,
+        "SELECT sii.id, sii.product_id, p.sku,
+                COALESCE(s.name, 'Unknown Supplier') || ' — ' || p.name, sii.quantity,
                 sii.unit_cost_cents, sii.unit_price_cents, sii.total_price_cents, sii.profit_cents
          FROM sales_invoice_items sii
          JOIN products p ON p.id = sii.product_id
+         LEFT JOIN suppliers s ON s.id = p.supplier_id
          WHERE sii.sales_invoice_id = ?1
          ORDER BY sii.id",
     )?;

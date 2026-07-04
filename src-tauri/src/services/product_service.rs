@@ -10,14 +10,15 @@ use crate::{
         audit::insert_audit_log,
         dates::now_iso,
         errors::AppError,
-        sku::generate_sku_from_product,
+        sku::{generate_sku_from_product, spec_key_from_product},
         validation::{non_negative_i64, optional_positive, required},
     },
 };
 
 pub fn generate_sku(payload: ProductPayload) -> Result<String, AppError> {
     validate_product_payload(&payload)?;
-    Ok(resolve_sku(&payload))
+    // Preview only (no DB): use the supplied supplier id if any, else 0 as a placeholder.
+    Ok(resolve_sku(&payload, payload.supplier_id.unwrap_or(0)))
 }
 
 pub fn list_products(conn: &Connection, filters: ProductFilters) -> Result<Vec<ProductRow>, AppError> {
@@ -28,7 +29,9 @@ pub fn list_products(conn: &Connection, filters: ProductFilters) -> Result<Vec<P
     let active_only = filters.active_only.unwrap_or(false);
 
     let mut stmt = conn.prepare(
-        "SELECT p.id, p.sku, p.category_id, c.name, p.name, p.product_type, p.material,
+        "SELECT p.id, p.sku, p.category_id, c.name,
+                p.supplier_id, COALESCE(s.name, 'Unknown Supplier'), p.spec_key, p.location,
+                p.name, p.product_type, p.material,
                 p.shape, p.finish, p.size_label, p.width_mm, p.height_mm, p.diameter_mm,
                 p.thickness_mm, p.length_mm, p.unit, p.description, p.is_active,
                 COALESCE(pp.cost_price_cents, 0), COALESCE(pp.selling_price_cents, 0),
@@ -37,6 +40,7 @@ pub fn list_products(conn: &Connection, filters: ProductFilters) -> Result<Vec<P
                 p.created_at, p.updated_at
          FROM products p
          JOIN categories c ON c.id = p.category_id
+         LEFT JOIN suppliers s ON s.id = p.supplier_id
          LEFT JOIN stock_levels sl ON sl.product_id = p.id
          LEFT JOIN product_prices pp ON pp.id = (
              SELECT id FROM product_prices
@@ -49,14 +53,19 @@ pub fn list_products(conn: &Connection, filters: ProductFilters) -> Result<Vec<P
              p.sku LIKE '%' || ?1 || '%' OR
              p.size_label LIKE '%' || ?1 || '%' OR
              p.material LIKE '%' || ?1 || '%' OR
+             s.name LIKE '%' || ?1 || '%' OR
              CAST(p.thickness_mm AS TEXT) LIKE '%' || ?1 || '%'
          ))
            AND (?2 IS NULL OR p.category_id = ?2)
-           AND (?3 = 0 OR p.is_active = 1)
+           AND (?3 IS NULL OR p.supplier_id = ?3)
+           AND (?4 = 0 OR p.is_active = 1)
          ORDER BY p.name ASC",
     )?;
     let rows = stmt
-        .query_map(params![search, filters.category_id, if active_only { 1 } else { 0 }], map_product)?
+        .query_map(
+            params![search, filters.category_id, filters.supplier_id, if active_only { 1 } else { 0 }],
+            map_product,
+        )?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
@@ -67,6 +76,7 @@ pub fn get_product(conn: &Connection, id: i64) -> Result<ProductRow, AppError> {
         ProductFilters {
             search: None,
             category_id: None,
+            supplier_id: None,
             active_only: Some(false),
         },
     )?;
@@ -82,7 +92,8 @@ pub fn create_product(
     payload: ProductPayload,
 ) -> Result<ProductRow, AppError> {
     validate_product_payload(&payload)?;
-    let sku = resolve_sku(&payload);
+    let supplier_id = resolve_supplier_id(conn, payload.supplier_id)?;
+    let sku = resolve_sku(&payload, supplier_id);
     ensure_unique_sku(conn, &sku, None)?;
     let settings = get_company_settings(conn)?;
     let now = now_iso();
@@ -91,17 +102,22 @@ pub fn create_product(
     if initial_quantity < 0.0 {
         return Err(AppError::validation("Initial quantity must be zero or greater."));
     }
+    let spec_key = spec_key_from_product(&payload);
+    let location = clean_optional(payload.location.as_deref());
 
     let tx = conn.unchecked_transaction()?;
     tx.execute(
         "INSERT INTO products
-         (sku, category_id, name, product_type, material, shape, finish, size_label,
+         (sku, category_id, supplier_id, spec_key, location, name, product_type, material, shape, finish, size_label,
           width_mm, height_mm, diameter_mm, thickness_mm, length_mm, unit, description,
           is_active, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, 1, ?16, ?16)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, 1, ?19, ?19)",
         params![
             sku,
             payload.category_id,
+            supplier_id,
+            spec_key,
+            location,
             payload.name.trim(),
             payload.product_type.trim(),
             payload.material.trim(),
@@ -168,24 +184,31 @@ pub fn update_product(
     payload: ProductPayload,
 ) -> Result<ProductRow, AppError> {
     validate_product_payload(&payload)?;
-    let sku = resolve_sku(&payload);
     ensure_product_exists(conn, id)?;
+    let supplier_id = resolve_supplier_id(conn, payload.supplier_id)?;
+    let sku = resolve_sku(&payload, supplier_id);
     ensure_unique_sku(conn, &sku, Some(id))?;
     let settings = get_company_settings(conn)?;
     let wholesale = payload.wholesale_price_cents.unwrap_or(0);
     let now = now_iso();
+    let spec_key = spec_key_from_product(&payload);
+    let location = clean_optional(payload.location.as_deref());
 
     let tx = conn.unchecked_transaction()?;
     tx.execute(
         "UPDATE products
-         SET sku = ?1, category_id = ?2, name = ?3, product_type = ?4, material = ?5,
-             shape = ?6, finish = ?7, size_label = ?8, width_mm = ?9, height_mm = ?10,
-             diameter_mm = ?11, thickness_mm = ?12, length_mm = ?13, unit = ?14,
-             description = ?15, updated_at = ?16
-         WHERE id = ?17",
+         SET sku = ?1, category_id = ?2, supplier_id = ?3, spec_key = ?4, location = ?5,
+             name = ?6, product_type = ?7, material = ?8,
+             shape = ?9, finish = ?10, size_label = ?11, width_mm = ?12, height_mm = ?13,
+             diameter_mm = ?14, thickness_mm = ?15, length_mm = ?16, unit = ?17,
+             description = ?18, updated_at = ?19
+         WHERE id = ?20",
         params![
             sku,
             payload.category_id,
+            supplier_id,
+            spec_key,
+            location,
             payload.name.trim(),
             payload.product_type.trim(),
             payload.material.trim(),
@@ -302,13 +325,16 @@ fn validate_product_payload(payload: &ProductPayload) -> Result<(), AppError> {
     Ok(())
 }
 
-fn resolve_sku(payload: &ProductPayload) -> String {
+/// Resolves the product SKU. An explicit SKU is respected as-is. When auto-generating,
+/// the resolved supplier id is appended so the same specification bought from different
+/// suppliers produces distinct, unique SKUs (e.g. BSP-RD-2INCH-2-S3 vs -S4).
+fn resolve_sku(payload: &ProductPayload, supplier_id: i64) -> String {
     payload
         .sku
         .as_ref()
         .map(|value| value.trim().to_uppercase())
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| generate_sku_from_product(payload))
+        .unwrap_or_else(|| format!("{}-S{supplier_id}", generate_sku_from_product(payload)))
 }
 
 fn ensure_unique_sku(conn: &Connection, sku: &str, excluded_id: Option<i64>) -> Result<(), AppError> {
@@ -335,32 +361,133 @@ fn ensure_product_exists(conn: &Connection, id: i64) -> Result<(), AppError> {
     }
 }
 
+fn clean_optional(value: Option<&str>) -> Option<String> {
+    value
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+}
+
+/// Resolves the supplier for a product, falling back to the "Unknown Supplier"
+/// row created by migration 003 when none is supplied. No supplier name is hard-coded
+/// outside that one migration-created fallback lookup.
+fn resolve_supplier_id(conn: &Connection, supplier_id: Option<i64>) -> Result<i64, AppError> {
+    if let Some(id) = supplier_id {
+        let exists: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM suppliers WHERE id = ?1 AND is_active = 1",
+            [id],
+            |row| row.get(0),
+        )?;
+        if exists == 0 {
+            return Err(AppError::validation("Selected supplier was not found or is archived."));
+        }
+        return Ok(id);
+    }
+    let fallback: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM suppliers WHERE name = 'Unknown Supplier' ORDER BY id LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    fallback.ok_or_else(|| AppError::validation("A supplier is required for this product."))
+}
+
+/// Supplier variants of products that share a specification, for cheapest comparison.
+/// Returns every active product whose spec_key appears more than once OR matches search,
+/// grouped by spec_key and sorted by selling price (cheapest first) within each group.
+pub fn list_supplier_variants(
+    conn: &Connection,
+    filters: crate::models::VariantFilters,
+) -> Result<Vec<crate::models::SupplierVariantRow>, AppError> {
+    let search = filters
+        .search
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let in_stock_only = filters.in_stock_only.unwrap_or(false);
+
+    let mut stmt = conn.prepare(
+        "SELECT p.spec_key, p.id, p.sku, p.name, p.supplier_id,
+                COALESCE(s.name, 'Unknown Supplier'), c.name, p.unit, p.location,
+                COALESCE(pp.cost_price_cents, 0), COALESCE(pp.selling_price_cents, 0),
+                COALESCE(sl.current_quantity, 0), p.is_active
+         FROM products p
+         JOIN categories c ON c.id = p.category_id
+         LEFT JOIN suppliers s ON s.id = p.supplier_id
+         LEFT JOIN stock_levels sl ON sl.product_id = p.id
+         LEFT JOIN product_prices pp ON pp.id = (
+             SELECT id FROM product_prices
+             WHERE product_id = p.id
+             ORDER BY effective_from DESC, id DESC
+             LIMIT 1
+         )
+         WHERE p.is_active = 1
+           AND (?1 IS NULL OR (
+               p.name LIKE '%' || ?1 || '%' OR
+               p.sku LIKE '%' || ?1 || '%' OR
+               p.size_label LIKE '%' || ?1 || '%' OR
+               p.material LIKE '%' || ?1 || '%' OR
+               s.name LIKE '%' || ?1 || '%'
+           ))
+           AND (?2 IS NULL OR p.category_id = ?2)
+           AND (?3 = 0 OR COALESCE(sl.current_quantity, 0) > 0)
+         ORDER BY p.name ASC, p.spec_key ASC,
+                  COALESCE(pp.selling_price_cents, 0) ASC, s.name ASC",
+    )?;
+    let rows = stmt
+        .query_map(
+            params![search, filters.category_id, if in_stock_only { 1 } else { 0 }],
+            |row| {
+                Ok(crate::models::SupplierVariantRow {
+                    spec_key: row.get(0)?,
+                    product_id: row.get(1)?,
+                    sku: row.get(2)?,
+                    name: row.get(3)?,
+                    supplier_id: row.get(4)?,
+                    supplier_name: row.get(5)?,
+                    category_name: row.get(6)?,
+                    unit: row.get(7)?,
+                    location: row.get(8)?,
+                    cost_price_cents: row.get(9)?,
+                    selling_price_cents: row.get(10)?,
+                    current_quantity: row.get(11)?,
+                    is_active: row.get::<_, i64>(12)? == 1,
+                })
+            },
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 fn map_product(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProductRow> {
     Ok(ProductRow {
         id: row.get(0)?,
         sku: row.get(1)?,
         category_id: row.get(2)?,
         category_name: row.get(3)?,
-        name: row.get(4)?,
-        product_type: row.get(5)?,
-        material: row.get(6)?,
-        shape: row.get(7)?,
-        finish: row.get(8)?,
-        size_label: row.get(9)?,
-        width_mm: row.get(10)?,
-        height_mm: row.get(11)?,
-        diameter_mm: row.get(12)?,
-        thickness_mm: row.get(13)?,
-        length_mm: row.get(14)?,
-        unit: row.get(15)?,
-        description: row.get(16)?,
-        is_active: row.get::<_, i64>(17)? == 1,
-        cost_price_cents: row.get(18)?,
-        selling_price_cents: row.get(19)?,
-        wholesale_price_cents: row.get(20)?,
-        current_quantity: row.get(21)?,
-        minimum_quantity: row.get(22)?,
-        created_at: row.get(23)?,
-        updated_at: row.get(24)?,
+        supplier_id: row.get(4)?,
+        supplier_name: row.get(5)?,
+        spec_key: row.get(6)?,
+        location: row.get(7)?,
+        name: row.get(8)?,
+        product_type: row.get(9)?,
+        material: row.get(10)?,
+        shape: row.get(11)?,
+        finish: row.get(12)?,
+        size_label: row.get(13)?,
+        width_mm: row.get(14)?,
+        height_mm: row.get(15)?,
+        diameter_mm: row.get(16)?,
+        thickness_mm: row.get(17)?,
+        length_mm: row.get(18)?,
+        unit: row.get(19)?,
+        description: row.get(20)?,
+        is_active: row.get::<_, i64>(21)? == 1,
+        cost_price_cents: row.get(22)?,
+        selling_price_cents: row.get(23)?,
+        wholesale_price_cents: row.get(24)?,
+        current_quantity: row.get(25)?,
+        minimum_quantity: row.get(26)?,
+        created_at: row.get(27)?,
+        updated_at: row.get(28)?,
     })
 }

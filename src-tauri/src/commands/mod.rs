@@ -10,4 +10,5 @@ pub mod report_commands;
 pub mod sales_commands;
 pub mod seed_commands;
 pub mod settings_commands;
+pub mod settlement_commands;
 pub mod supplier_commands;

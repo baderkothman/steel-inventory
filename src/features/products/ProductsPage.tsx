@@ -29,7 +29,7 @@ import { MoneyText } from "../../components/MoneyText";
 import { PageHeader } from "../../components/PageHeader";
 import { ConfirmDialog } from "../../components/feedback/ConfirmDialog";
 import { EmptyState, LoadingState } from "../../components/feedback/PageState";
-import { categoryApi, productApi } from "../../lib/api";
+import { categoryApi, productApi, supplierApi } from "../../lib/api";
 import { finishes, materials, productTypes, shapes, units } from "../../lib/constants";
 import { fromCents, quantity, toCents } from "../../lib/formatters";
 import { normalizeError } from "../../lib/tauri";
@@ -45,6 +45,8 @@ type ProductForm = Omit<ProductPayload, "cost_price_cents" | "selling_price_cent
 const blankProduct: ProductForm = {
   sku: "",
   category_id: 0,
+  supplier_id: null,
+  location: "",
   name: "",
   product_type: "pipe",
   material: "galvanized steel",
@@ -69,6 +71,7 @@ export function ProductsPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [categoryId, setCategoryId] = useState<number | "">("");
+  const [supplierId, setSupplierId] = useState<number | "">("");
   const [form, setForm] = useState<ProductForm | null>(null);
   const [archiveId, setArchiveId] = useState<number | null>(null);
   const [movementProduct, setMovementProduct] = useState<Product | null>(null);
@@ -76,12 +79,14 @@ export function ProductsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: categoryApi.list });
+  const { data: suppliers = [] } = useQuery({ queryKey: ["suppliers"], queryFn: () => supplierApi.list({ active_only: true }) });
   const { data: products = [], isLoading } = useQuery({
-    queryKey: ["products", search, categoryId],
+    queryKey: ["products", search, categoryId, supplierId],
     queryFn: () =>
       productApi.list({
         search: search || null,
         category_id: categoryId || null,
+        supplier_id: supplierId || null,
         active_only: false
       })
   });
@@ -158,6 +163,20 @@ export function ProductsPage() {
               </MenuItem>
             ))}
           </TextField>
+          <TextField
+            select
+            label="Supplier"
+            value={supplierId}
+            onChange={(event) => setSupplierId(event.target.value ? Number(event.target.value) : "")}
+            sx={{ minWidth: 220 }}
+          >
+            <MenuItem value="">All suppliers</MenuItem>
+            {suppliers.map((supplier) => (
+              <MenuItem key={supplier.id} value={supplier.id}>
+                {supplier.name}
+              </MenuItem>
+            ))}
+          </TextField>
         </Stack>
       </Paper>
 
@@ -170,6 +189,7 @@ export function ProductsPage() {
               <TableRow>
                 <TableCell>SKU</TableCell>
                 <TableCell>Product</TableCell>
+                <TableCell>Supplier</TableCell>
                 <TableCell>Category</TableCell>
                 <TableCell>Size</TableCell>
                 <TableCell align="right">Stock</TableCell>
@@ -184,6 +204,7 @@ export function ProductsPage() {
                 <TableRow key={product.id} hover>
                   <TableCell>{product.sku}</TableCell>
                   <TableCell>{product.name}</TableCell>
+                  <TableCell>{product.supplier_name}</TableCell>
                   <TableCell>{product.category_name}</TableCell>
                   <TableCell>
                     {product.size_label} {product.thickness_mm ? `${product.thickness_mm}mm` : ""}
@@ -208,6 +229,7 @@ export function ProductsPage() {
       <ProductDialog
         form={form}
         categories={activeCategories}
+        suppliers={suppliers}
         error={error}
         saving={saveMutation.isPending}
         onClose={() => setForm(null)}
@@ -231,6 +253,7 @@ export function ProductsPage() {
 function ProductDialog({
   form,
   categories,
+  suppliers,
   error,
   saving,
   onClose,
@@ -239,6 +262,7 @@ function ProductDialog({
 }: {
   form: ProductForm | null;
   categories: Array<{ id: number; name: string }>;
+  suppliers: Array<{ id: number; name: string }>;
   error: string | null;
   saving: boolean;
   onClose: () => void;
@@ -257,6 +281,11 @@ function ProductDialog({
             <TextField select label="Category" required value={form?.category_id || ""} onChange={(e) => onChange(form && { ...form, category_id: Number(e.target.value) })}>
               {categories.map((category) => <MenuItem key={category.id} value={category.id}>{category.name}</MenuItem>)}
             </TextField>
+            <TextField select label="Supplier" value={form?.supplier_id ?? ""} onChange={(e) => onChange(form && { ...form, supplier_id: e.target.value ? Number(e.target.value) : null })} helperText="Defaults to Unknown Supplier if left blank">
+              <MenuItem value="">Unknown Supplier</MenuItem>
+              {suppliers.map((supplier) => <MenuItem key={supplier.id} value={supplier.id}>{supplier.name}</MenuItem>)}
+            </TextField>
+            <TextField label="Location" value={form?.location ?? ""} onChange={(e) => onChange(form && { ...form, location: e.target.value })} helperText="Storage area (optional)" />
             <SelectField label="Type" value={form?.product_type ?? ""} values={productTypes} onChange={(value) => onChange(form && { ...form, product_type: value })} />
             <SelectField label="Material" value={form?.material ?? ""} values={materials} onChange={(value) => onChange(form && { ...form, material: value })} />
             <SelectField label="Shape" value={form?.shape ?? ""} values={shapes} onChange={(value) => onChange(form && { ...form, shape: value })} />
@@ -368,6 +397,8 @@ function formToPayload(form: ProductForm): ProductPayload {
 function productToForm(product: Product): ProductForm {
   return {
     ...product,
+    supplier_id: product.supplier_id ?? null,
+    location: product.location ?? "",
     size_label: product.size_label ?? "",
     description: product.description ?? "",
     cost_price: fromCents(product.cost_price_cents),

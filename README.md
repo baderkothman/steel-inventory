@@ -57,3 +57,13 @@ Money values are stored as integer cents. Stock movements are recorded in `inven
 - Sales invoice items store cost, price, total cost, total price, and profit snapshots.
 - Cancelled invoices reverse stock movement and remove linked invoice-created payments.
 - The settings table includes `default_tax_rate` and `default_profit_method` because FR-018 requires them, although the SDS table omitted those columns.
+
+## Supplier-Specific Features
+
+Products can be tracked per supplier (the same specification from multiple companies coexists
+as priced/stocked variants), compared by cheapest price, settled as daily/weekly supplier
+payables based on actual completed sales, and printed as a physical stock count sheet. See
+[SUPPLIER_FEATURES.md](SUPPLIER_FEATURES.md) for the full workflow and
+[SUPPLIER_FEATURES_AUDIT.md](SUPPLIER_FEATURES_AUDIT.md) for the implementation audit
+(what existed, what was missing, what changed). Database changes live in migration
+`src-tauri/src/db/migrations/003_supplier_product_variants.sql`.

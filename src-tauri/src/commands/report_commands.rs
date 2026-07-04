@@ -105,3 +105,31 @@ pub fn get_best_selling_products_report(state: State<'_, AppState>, filters: Rep
     let conn = state.open_conn()?;
     report_service::best_selling_products_report(&conn, filters)
 }
+
+#[tauri::command]
+pub fn get_stock_count_report(state: State<'_, AppState>, filters: ReportFilters) -> Result<Vec<Value>, AppError> {
+    state.require_user_id()?;
+    let conn = state.open_conn()?;
+    report_service::stock_count_report(&conn, filters)
+}
+
+#[tauri::command]
+pub fn get_cheapest_supplier_report(state: State<'_, AppState>, filters: ReportFilters) -> Result<Vec<Value>, AppError> {
+    state.require_user_id()?;
+    let conn = state.open_conn()?;
+    report_service::cheapest_supplier_report(&conn, filters)
+}
+
+#[tauri::command]
+pub fn get_supplier_settlement_report(state: State<'_, AppState>, filters: ReportFilters) -> Result<Vec<Value>, AppError> {
+    state.require_user_id()?;
+    let conn = state.open_conn()?;
+    report_service::supplier_settlement_report(&conn, filters)
+}
+
+#[tauri::command]
+pub fn get_supplier_settlement_summary(state: State<'_, AppState>, filters: ReportFilters) -> Result<Vec<Value>, AppError> {
+    state.require_user_id()?;
+    let conn = state.open_conn()?;
+    report_service::supplier_settlement_summary(&conn, filters)
+}

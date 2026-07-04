@@ -61,6 +61,7 @@ pub fn dashboard_summary(conn: &Connection, date: Option<String>) -> Result<Dash
         ProductFilters {
             search: None,
             category_id: None,
+            supplier_id: None,
             active_only: Some(true),
         },
     )?
@@ -238,6 +239,7 @@ pub fn stock_report(conn: &Connection, filters: ReportFilters) -> Result<Vec<Val
         ProductFilters {
             search: None,
             category_id: filters.category_id,
+            supplier_id: filters.supplier_id,
             active_only: Some(true),
         },
     )?;
@@ -247,12 +249,178 @@ pub fn stock_report(conn: &Connection, filters: ReportFilters) -> Result<Vec<Val
             json!({
                 "sku": p.sku,
                 "product": p.name,
+                "supplier": p.supplier_name,
                 "category": p.category_name,
                 "unit": p.unit,
                 "current_quantity": p.current_quantity,
                 "minimum_quantity": p.minimum_quantity,
                 "cost_price_cents": p.cost_price_cents,
                 "stock_value_cents": (p.current_quantity * p.cost_price_cents as f64).round() as i64
+            })
+        })
+        .collect())
+}
+
+/// Printable physical stock-count sheet: system quantity plus blank counted/difference
+/// columns for manual entry, with supplier, category, unit, and storage location.
+/// Filters: category, supplier, and low-stock-only.
+pub fn stock_count_report(conn: &Connection, filters: ReportFilters) -> Result<Vec<Value>, AppError> {
+    let products = list_products(
+        conn,
+        ProductFilters {
+            search: None,
+            category_id: filters.category_id,
+            supplier_id: filters.supplier_id,
+            active_only: Some(true),
+        },
+    )?;
+    let low_only = filters
+        .payment_status
+        .as_deref()
+        .map(|value| value.eq_ignore_ascii_case("low"))
+        .unwrap_or(false);
+    Ok(products
+        .into_iter()
+        .filter(|p| !low_only || p.current_quantity <= p.minimum_quantity)
+        .map(|p| {
+            json!({
+                "sku": p.sku,
+                "product": p.name,
+                "supplier": p.supplier_name,
+                "category": p.category_name,
+                "location": p.location.clone().unwrap_or_default(),
+                "unit": p.unit,
+                "system_quantity": p.current_quantity,
+                "counted_quantity": "",
+                "difference": ""
+            })
+        })
+        .collect())
+}
+
+/// Supplier settlement / payable report: how much is owed to each supplier based on
+/// goods of theirs that were actually sold (completed sales only). Groups by supplier
+/// and product, with quantity sold, unit cost, and amount owed per product and per supplier.
+pub fn supplier_settlement_report(conn: &Connection, filters: ReportFilters) -> Result<Vec<Value>, AppError> {
+    let mut stmt = conn.prepare(
+        "SELECT COALESCE(s.name, 'Unknown Supplier') AS supplier,
+                p.sku, p.name,
+                SUM(sii.quantity) AS qty,
+                CASE WHEN SUM(sii.quantity) = 0 THEN 0
+                     ELSE CAST(ROUND(SUM(sii.total_cost_cents) / SUM(sii.quantity)) AS INTEGER) END AS unit_cost_cents,
+                SUM(sii.total_cost_cents) AS owed_cents
+         FROM sales_invoice_items sii
+         JOIN sales_invoices si ON si.id = sii.sales_invoice_id
+         JOIN products p ON p.id = sii.product_id
+         LEFT JOIN suppliers s ON s.id = p.supplier_id
+         WHERE si.sales_status = 'completed'
+           AND (?1 IS NULL OR date(si.invoice_date) >= date(?1))
+           AND (?2 IS NULL OR date(si.invoice_date) <= date(?2))
+           AND (?3 IS NULL OR p.supplier_id = ?3)
+         GROUP BY p.supplier_id, p.id
+         ORDER BY supplier ASC, owed_cents DESC",
+    )?;
+    let rows = stmt
+        .query_map(
+            params![filters.date_from, filters.date_to, filters.supplier_id],
+            |row| {
+                Ok(json!({
+                    "supplier": row.get::<_, String>(0)?,
+                    "sku": row.get::<_, String>(1)?,
+                    "product": row.get::<_, String>(2)?,
+                    "quantity_sold": row.get::<_, f64>(3)?,
+                    "unit_cost_cents": row.get::<_, i64>(4)?,
+                    "owed_cents": row.get::<_, i64>(5)?
+                }))
+            },
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Per-supplier settlement summary: grand total owed (from completed sales) minus
+/// settlement payments already recorded for the period, with remaining balance.
+pub fn supplier_settlement_summary(conn: &Connection, filters: ReportFilters) -> Result<Vec<Value>, AppError> {
+    let mut stmt = conn.prepare(
+        "SELECT s.id, COALESCE(s.name, 'Unknown Supplier') AS supplier,
+                COALESCE(owed.owed_cents, 0) AS owed_cents,
+                COALESCE(paid.paid_cents, 0) AS paid_cents
+         FROM suppliers s
+         LEFT JOIN (
+             SELECT p.supplier_id AS sid, SUM(sii.total_cost_cents) AS owed_cents
+             FROM sales_invoice_items sii
+             JOIN sales_invoices si ON si.id = sii.sales_invoice_id
+             JOIN products p ON p.id = sii.product_id
+             WHERE si.sales_status = 'completed'
+               AND (?1 IS NULL OR date(si.invoice_date) >= date(?1))
+               AND (?2 IS NULL OR date(si.invoice_date) <= date(?2))
+             GROUP BY p.supplier_id
+         ) owed ON owed.sid = s.id
+         LEFT JOIN (
+             SELECT supplier_id AS sid, SUM(amount_cents) AS paid_cents
+             FROM supplier_settlement_payments
+             WHERE (?1 IS NULL OR date(payment_date) >= date(?1))
+               AND (?2 IS NULL OR date(payment_date) <= date(?2))
+             GROUP BY supplier_id
+         ) paid ON paid.sid = s.id
+         WHERE (?3 IS NULL OR s.id = ?3)
+           AND (COALESCE(owed.owed_cents, 0) > 0 OR COALESCE(paid.paid_cents, 0) > 0)
+         ORDER BY owed_cents DESC, supplier ASC",
+    )?;
+    let rows = stmt
+        .query_map(
+            params![filters.date_from, filters.date_to, filters.supplier_id],
+            |row| {
+                let owed: i64 = row.get(2)?;
+                let paid: i64 = row.get(3)?;
+                Ok(json!({
+                    "supplier": row.get::<_, String>(1)?,
+                    "owed_cents": owed,
+                    "settled_cents": paid,
+                    "remaining_cents": owed - paid
+                }))
+            },
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Cheapest-supplier comparison: same specification across suppliers, sorted by
+/// selling price (cheapest first) within each shared product. Marks the cheapest row.
+pub fn cheapest_supplier_report(conn: &Connection, filters: ReportFilters) -> Result<Vec<Value>, AppError> {
+    use std::collections::HashMap;
+    let variants = crate::services::product_service::list_supplier_variants(
+        conn,
+        crate::models::VariantFilters {
+            search: None,
+            category_id: filters.category_id,
+            in_stock_only: None,
+        },
+    )?;
+    let mut cheapest: HashMap<String, i64> = HashMap::new();
+    for v in &variants {
+        cheapest
+            .entry(v.spec_key.clone())
+            .and_modify(|min| {
+                if v.selling_price_cents < *min {
+                    *min = v.selling_price_cents;
+                }
+            })
+            .or_insert(v.selling_price_cents);
+    }
+    Ok(variants
+        .into_iter()
+        .map(|v| {
+            let is_cheapest = cheapest.get(&v.spec_key).map(|min| *min == v.selling_price_cents).unwrap_or(false);
+            json!({
+                "product": v.name,
+                "supplier": v.supplier_name,
+                "category": v.category_name,
+                "unit": v.unit,
+                "available_quantity": v.current_quantity,
+                "cost_price_cents": v.cost_price_cents,
+                "selling_price_cents": v.selling_price_cents,
+                "cheapest": if is_cheapest { "Yes" } else { "" }
             })
         })
         .collect())

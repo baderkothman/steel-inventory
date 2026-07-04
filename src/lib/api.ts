@@ -3,7 +3,16 @@ import type { AdminUser, BackupRow, Category, CompanySettings, DateRangeFilters 
 import type { InvoiceListRow, InvoiceSaveResult, PurchaseInvoicePayload, SalesInvoicePayload } from "../types/invoice";
 import type { ExpenseCategory, ExpensePayload, ExpenseRow, PaymentPayload, PaymentRow } from "../types/payment";
 import type { Party, PartyPayload, StatementRow } from "../types/party";
-import type { InventoryTransaction, Product, ProductPayload } from "../types/product";
+import type {
+  InventoryTransaction,
+  Product,
+  ProductPayload,
+  SettlementFilters,
+  SettlementPayment,
+  SettlementPaymentPayload,
+  SupplierVariant,
+  VariantFilters
+} from "../types/product";
 import type { DashboardSummary, ReportFilters, ReportRow } from "../types/report";
 
 export const authApi = {
@@ -41,7 +50,15 @@ export const productApi = {
     unit_cost_cents?: number | null;
     notes?: string | null;
   }) => call<void>("adjust_stock", { payload }),
-  generateSku: (payload: ProductPayload) => call<string>("generate_product_sku", { payload })
+  generateSku: (payload: ProductPayload) => call<string>("generate_product_sku", { payload }),
+  supplierVariants: (filters: VariantFilters = {}) =>
+    call<SupplierVariant[]>("list_supplier_variants", { filters })
+};
+
+export const settlementApi = {
+  list: (filters: SettlementFilters = {}) => call<SettlementPayment[]>("list_settlement_payments", { filters }),
+  create: (payload: SettlementPaymentPayload) => call<SettlementPayment>("create_settlement_payment", { payload }),
+  delete: (id: number) => call<void>("delete_settlement_payment", { id })
 };
 
 function partyApi(kind: "supplier" | "customer") {
@@ -101,7 +118,12 @@ export const reportApi = {
   expense: (filters: ReportFilters) => call<ReportRow[]>("get_expense_report", { filters }),
   payment: (filters: ReportFilters) => call<ReportRow[]>("get_payment_report", { filters }),
   inventoryValue: () => call<ReportRow[]>("get_inventory_value_report"),
-  bestSelling: (filters: ReportFilters) => call<ReportRow[]>("get_best_selling_products_report", { filters })
+  bestSelling: (filters: ReportFilters) => call<ReportRow[]>("get_best_selling_products_report", { filters }),
+  stockCount: (filters: ReportFilters) => call<ReportRow[]>("get_stock_count_report", { filters }),
+  cheapestSupplier: (filters: ReportFilters) => call<ReportRow[]>("get_cheapest_supplier_report", { filters }),
+  supplierSettlement: (filters: ReportFilters) => call<ReportRow[]>("get_supplier_settlement_report", { filters }),
+  supplierSettlementSummary: (filters: ReportFilters) =>
+    call<ReportRow[]>("get_supplier_settlement_summary", { filters })
 };
 
 export const seedApi = {

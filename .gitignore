@@ -18,7 +18,6 @@ coverage/
 # Tauri / Rust build files
 
 src-tauri/target/
-src-tauri/Cargo.lock
 
 # Tauri generated bundles / installers
 
@@ -108,8 +107,4 @@ storage/
 *.pfx
 *.p12
 
-# Package manager files usually kept only if intentionally used
-
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
+# Package manager lockfiles are intentionally committed for reproducible CI builds.

@@ -3,6 +3,10 @@ export type Product = {
   sku: string;
   category_id: number;
   category_name: string;
+  supplier_id?: number | null;
+  supplier_name: string;
+  spec_key: string;
+  location?: string | null;
   name: string;
   product_type: string;
   material: string;
@@ -29,6 +33,8 @@ export type Product = {
 export type ProductPayload = {
   sku?: string | null;
   category_id: number;
+  supplier_id?: number | null;
+  location?: string | null;
   name: string;
   product_type: string;
   material: string;
@@ -47,6 +53,60 @@ export type ProductPayload = {
   wholesale_price_cents?: number | null;
   minimum_quantity: number;
   initial_quantity?: number | null;
+};
+
+export type SupplierVariant = {
+  spec_key: string;
+  product_id: number;
+  sku: string;
+  name: string;
+  supplier_id?: number | null;
+  supplier_name: string;
+  category_name: string;
+  unit: string;
+  location?: string | null;
+  cost_price_cents: number;
+  selling_price_cents: number;
+  current_quantity: number;
+  is_active: boolean;
+};
+
+export type VariantFilters = {
+  search?: string | null;
+  category_id?: number | null;
+  in_stock_only?: boolean | null;
+};
+
+export type SettlementPaymentPayload = {
+  supplier_id: number;
+  period_start: string;
+  period_end: string;
+  amount_cents: number;
+  status: string;
+  payment_date: string;
+  reference?: string | null;
+  notes?: string | null;
+};
+
+export type SettlementPayment = {
+  id: number;
+  supplier_id: number;
+  supplier_name: string;
+  period_start: string;
+  period_end: string;
+  amount_cents: number;
+  currency: string;
+  status: string;
+  payment_date: string;
+  reference?: string | null;
+  notes?: string | null;
+  created_at: string;
+};
+
+export type SettlementFilters = {
+  date_from?: string | null;
+  date_to?: string | null;
+  supplier_id?: number | null;
 };
 
 export type InventoryTransaction = {
