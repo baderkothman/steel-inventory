@@ -48,6 +48,7 @@ pub fn create_payment(
 ) -> Result<PaymentRow, AppError> {
     validate_payment_payload(&payload)?;
     let direction = direction_for_party(&payload.party_type)?;
+    ensure_payment_party_exists(conn, &payload.party_type, payload.party_id)?;
     let settings = get_company_settings(conn)?;
     let currency = if payload.currency.trim().is_empty() {
         settings.default_currency
@@ -78,7 +79,14 @@ pub fn create_payment(
         ],
     )?;
     let id = tx.last_insert_rowid();
-    sync_linked_invoice_payment(&tx, &payload.party_type, payload.reference_type.as_deref(), payload.reference_id, payload.amount_cents)?;
+    sync_linked_invoice_payment(
+        &tx,
+        &payload.party_type,
+        payload.party_id,
+        payload.reference_type.as_deref(),
+        payload.reference_id,
+        payload.amount_cents,
+    )?;
     insert_audit_log(
         &tx,
         user_id,
@@ -98,6 +106,7 @@ pub fn delete_payment(conn: &Connection, user_id: i64, id: i64) -> Result<(), Ap
     sync_linked_invoice_payment(
         &tx,
         &payment.party_type,
+        payment.party_id,
         payment.reference_type.as_deref(),
         payment.reference_id,
         -payment.amount_cents,
@@ -130,6 +139,7 @@ fn get_payment(conn: &Connection, id: i64) -> Result<PaymentRow, AppError> {
 fn sync_linked_invoice_payment(
     conn: &Connection,
     party_type: &str,
+    party_id: i64,
     reference_type: Option<&str>,
     reference_id: Option<i64>,
     amount_delta: i64,
@@ -141,20 +151,36 @@ fn sync_linked_invoice_payment(
         return Ok(());
     };
 
-    let (table, expected_party) = match reference_type {
-        "sales_invoice" => ("sales_invoices", "customer"),
-        "purchase_invoice" => ("purchase_invoices", "supplier"),
+    let (table, expected_party, party_column, status_filter) = match reference_type {
+        "sales_invoice" => (
+            "sales_invoices",
+            "customer",
+            "customer_id",
+            "sales_status = 'completed'",
+        ),
+        "purchase_invoice" => (
+            "purchase_invoices",
+            "supplier",
+            "supplier_id",
+            "status = 'active'",
+        ),
         _ => return Err(AppError::validation("Invalid payment invoice reference.")),
     };
     if party_type != expected_party {
         return Err(AppError::validation("Payment party type does not match invoice reference."));
     }
 
-    let sql = format!("SELECT total_cents, paid_cents FROM {table} WHERE id = ?1");
+    let sql = format!(
+        "SELECT total_cents, paid_cents
+         FROM {table}
+         WHERE id = ?1 AND {party_column} = ?2 AND {status_filter}"
+    );
     let (total, paid): (i64, i64) = conn
-        .query_row(&sql, [reference_id], |row| Ok((row.get(0)?, row.get(1)?)))
+        .query_row(&sql, params![reference_id, party_id], |row| Ok((row.get(0)?, row.get(1)?)))
         .map_err(|error| match error {
-            rusqlite::Error::QueryReturnedNoRows => AppError::not_found("Linked invoice not found."),
+            rusqlite::Error::QueryReturnedNoRows => {
+                AppError::validation("Linked invoice does not belong to this party or is no longer active.")
+            }
             other => other.into(),
         })?;
     let next_paid = paid + amount_delta;
@@ -163,14 +189,35 @@ fn sync_linked_invoice_payment(
     }
     let remaining = total - next_paid;
     let status = payment_status(total, next_paid);
-    let status_column = if table == "sales_invoices" { "payment_status" } else { "payment_status" };
     let sql = format!(
         "UPDATE {table}
-         SET paid_cents = ?1, remaining_cents = ?2, {status_column} = ?3, updated_at = ?4
+         SET paid_cents = ?1, remaining_cents = ?2, payment_status = ?3, updated_at = ?4
          WHERE id = ?5"
     );
     conn.execute(&sql, params![next_paid, remaining, status, now_iso(), reference_id])?;
     Ok(())
+}
+
+fn ensure_payment_party_exists(
+    conn: &Connection,
+    party_type: &str,
+    party_id: i64,
+) -> Result<(), AppError> {
+    let table = match party_type {
+        "customer" => "customers",
+        "supplier" => "suppliers",
+        _ => return Err(AppError::validation("Party type must be customer or supplier.")),
+    };
+    let count: i64 = conn.query_row(
+        &format!("SELECT COUNT(*) FROM {table} WHERE id = ?1"),
+        [party_id],
+        |row| row.get(0),
+    )?;
+    if count == 0 {
+        Err(AppError::not_found("Payment party not found."))
+    } else {
+        Ok(())
+    }
 }
 
 fn validate_payment_payload(payload: &PaymentPayload) -> Result<(), AppError> {
@@ -186,6 +233,10 @@ fn validate_payment_payload(payload: &PaymentPayload) -> Result<(), AppError> {
         if payload.reference_id.is_none() {
             return Err(AppError::validation("Reference ID is required when reference type is provided."));
         }
+    } else if payload.reference_id.is_some() {
+        return Err(AppError::validation(
+            "Reference type is required when a reference ID is provided.",
+        ));
     }
     Ok(())
 }

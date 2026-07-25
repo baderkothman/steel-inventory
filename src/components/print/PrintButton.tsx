@@ -10,6 +10,7 @@ type PrintButtonProps = {
   subtitle?: string;
   disabled?: boolean;
   label?: string;
+  contentHasHeader?: boolean;
 };
 
 export function PrintButton({
@@ -17,7 +18,8 @@ export function PrintButton({
   title,
   subtitle,
   disabled = false,
-  label = "Print"
+  label = "Print",
+  contentHasHeader = false
 }: PrintButtonProps) {
   const [html, setHtml] = useState("");
 
@@ -27,7 +29,7 @@ export function PrintButton({
 
     const content = target.cloneNode(true) as HTMLElement;
     content.querySelectorAll(".print-exclude, button").forEach((node) => node.remove());
-    setHtml(buildPrintDocument(title, subtitle, content.innerHTML));
+    setHtml(buildPrintDocument(title, subtitle, content.innerHTML, contentHasHeader));
   }
 
   return (
@@ -54,7 +56,12 @@ function escapeHtml(value: string) {
     .replace(/"/g, "&quot;");
 }
 
-function buildPrintDocument(title: string, subtitle: string | undefined, content: string) {
+function buildPrintDocument(
+  title: string,
+  subtitle: string | undefined,
+  content: string,
+  contentHasHeader: boolean
+) {
   const generated = new Date().toLocaleString();
   return `<!doctype html>
 <html>
@@ -77,14 +84,43 @@ function buildPrintDocument(title: string, subtitle: string | undefined, content
       .MuiCardContent-root{padding:6px!important}
       .MuiTypography-h5{font-size:16px;font-weight:700}
       .MuiTypography-h6{font-size:14px;font-weight:700;margin:14px 0 6px}
+      .stock-report{font-family:Inter,"Segoe UI",Arial,sans-serif;color:#16202a}
+      .stock-report__header{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;padding:0 0 16px;border-bottom:2px solid #244f55}
+      .stock-report__eyebrow{margin:0 0 4px;color:#1f6f78;font-size:9px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
+      .stock-report__header h1{margin:0;font-size:23px;line-height:1.15;letter-spacing:-.025em}
+      .stock-report__subtitle{margin:5px 0 0;color:#5b6773;font-size:10px}
+      .stock-report__summary{display:flex;gap:18px;margin:0}
+      .stock-report__summary div{min-width:58px}
+      .stock-report__summary dt{color:#6b7782;font-size:8px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+      .stock-report__summary dd{margin:3px 0 0;font-size:10px;font-weight:750;font-variant-numeric:tabular-nums}
+      .stock-report__groups{display:grid;gap:14px;margin-top:16px}
+      .stock-group{break-inside:avoid;page-break-inside:avoid}
+      .stock-group__heading{display:flex;align-items:end;justify-content:space-between;padding:7px 9px;background:#e8f0f1;border-left:4px solid #1f6f78}
+      .stock-group__heading span{display:block;color:#557078;font-size:8px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+      .stock-group__heading h2{margin:1px 0 0;font-size:13px;line-height:1.15}
+      .stock-group__heading p{margin:0;color:#52616d;font-size:9px}
+      .stock-group table{width:100%;border-collapse:collapse;table-layout:fixed}
+      .stock-group th,.stock-group td{border:0;border-bottom:1px solid #dbe3e6;padding:6px 9px;vertical-align:middle}
+      .stock-group th{background:#f7f9fa;color:#66737e;font-size:8px;font-weight:800;letter-spacing:.045em;text-transform:uppercase}
+      .stock-group td{font-size:10px}
+      .stock-group th:first-child,.stock-group td:first-child{width:38%}
+      .stock-group th:nth-child(2),.stock-group td:nth-child(2){width:15%}
+      .stock-group th:nth-child(3),.stock-group td:nth-child(3){width:15%}
+      .stock-group th:nth-child(4),.stock-group td:nth-child(4){width:16%}
+      .stock-group th:nth-child(5),.stock-group td:nth-child(5){width:16%}
+      .stock-group .num{text-align:right;font-variant-numeric:tabular-nums}
+      .stock-group .product-name{font-weight:700}
+      .stock-group .price{white-space:nowrap}
+      .stock-quantity strong{font-size:11px}
+      .stock-quantity span{margin-left:4px;color:#68747e;font-size:8px}
       button,.print-exclude{display:none!important}
       @page{size:auto;margin:10mm}
     </style>
   </head>
   <body>
-    <h1>${escapeHtml(title)}</h1>
-    ${subtitle ? `<p class="subtitle">${escapeHtml(subtitle)}</p>` : ""}
-    <div class="generated">Printed ${escapeHtml(generated)}</div>
+    ${contentHasHeader ? "" : `<h1>${escapeHtml(title)}</h1>`}
+    ${contentHasHeader || !subtitle ? "" : `<p class="subtitle">${escapeHtml(subtitle)}</p>`}
+    ${contentHasHeader ? "" : `<div class="generated">Printed ${escapeHtml(generated)}</div>`}
     ${content}
   </body>
 </html>`;

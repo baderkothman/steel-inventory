@@ -79,19 +79,20 @@ Configure the required GitHub repository secret once:
 gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/steel-inventory.key
 ```
 
-To publish version `1.0.5`, make sure `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` all contain `1.0.5`, then commit and push the code:
+To publish version `1.0.6`, make sure `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` all contain `1.0.6`, then commit and push the code:
 
 ```bash
-git add .github/workflows/release-desktop.yml README.md package.json package-lock.json \
+git add .github/workflows/release-desktop.yml README.md RELEASE_NOTES_v1.0.6.md package.json package-lock.json \
   src src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/capabilities \
   src-tauri/gen/schemas src-tauri/src src-tauri/tauri.conf.json
-git commit -m "release: v1.0.5"
+git commit -m "release: v1.0.6"
 git push origin master
-git tag v1.0.5
-git push origin v1.0.5
+git tag v1.0.6
+git push origin v1.0.6
 ```
 
 Pushing the tag runs `.github/workflows/release-desktop.yml`. The workflow creates a public GitHub Release containing the universal DMG, signed updater archive, signature, and `latest.json`.
+Use `RELEASE_NOTES_v1.0.6.md` as the GitHub Release description after the workflow finishes.
 
 Builds are ad-hoc signed because no Apple Developer identity is currently configured. Users may need to approve the first installation in macOS Privacy & Security. For frictionless public distribution, configure a paid Apple Developer ID certificate and notarization credentials.
 

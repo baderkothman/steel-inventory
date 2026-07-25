@@ -3,14 +3,16 @@ use rusqlite::Connection;
 use crate::{
     db::migrations::run_migrations,
     models::{
-        PartyPayload, ProductPayload, PurchaseInvoicePayload, PurchaseItemPayload, SalesInvoicePayload,
-        SalesItemPayload, SetupAdminPayload,
+        PartyPayload, PaymentPayload, ProductPayload, PurchaseInvoicePayload, PurchaseItemPayload,
+        ReportFilters, SalesInvoicePayload, SalesItemPayload, SetupAdminPayload,
     },
     services::{
         auth_service::setup_admin,
-        party_service::{create_party, PartyKind},
+        party_service::{archive_party, create_party, party_balance, PartyKind},
+        payment_service::{create_payment, delete_payment},
         product_service::{create_product, delete_product},
         purchase_service::create_purchase_invoice,
+        report_service::{dashboard_summary, stock_report},
         sales_service::create_sales_invoice,
         seed_service::seed_demo_data,
     },
@@ -669,4 +671,265 @@ fn invoiced_product_must_be_archived_instead_of_deleted() {
     let error = delete_product(&conn, user, product.id).unwrap_err();
     assert_eq!(error.code, "VALIDATION_ERROR");
     assert!(error.message.contains("Archive it instead"));
+}
+
+#[test]
+fn stock_remaining_report_uses_product_details_without_sku() {
+    let conn = test_conn();
+    let user = make_admin(&conn);
+    let supplier = make_supplier(&conn, user, "Stock Report Supplier");
+    let product = create_product(
+        &conn,
+        user,
+        round_pipe_payload(Some(supplier), "Round Pipe 2 inch", 1000, 1750),
+    )
+    .unwrap();
+
+    crate::services::inventory_service::adjust_stock(
+        &conn,
+        user,
+        crate::models::StockAdjustmentPayload {
+            product_id: product.id,
+            transaction_type: "adjustment_in".to_string(),
+            quantity: 7.5,
+            unit_cost_cents: Some(1000),
+            notes: None,
+        },
+    )
+    .unwrap();
+
+    let rows = stock_report(&conn, ReportFilters::default()).unwrap();
+    let row = rows
+        .iter()
+        .find(|row| row["product_name"] == "Round Pipe 2 inch")
+        .unwrap();
+
+    assert!(row.get("sku").is_none());
+    assert_eq!(row["product_type"], "pipe");
+    assert_eq!(row["size"], "2 inch");
+    assert_eq!(row["thickness_mm"], 2.0);
+    assert_eq!(row["selling_price_cents"], 1750);
+    assert_eq!(row["remaining_quantity"], 7.5);
+}
+
+#[test]
+fn deleting_payment_recomputes_the_live_party_balance() {
+    let conn = test_conn();
+    let user = make_admin(&conn);
+    let customer = create_party(
+        &conn,
+        user,
+        PartyKind::Customer,
+        PartyPayload {
+            name: "Balance Customer".to_string(),
+            company_name: None,
+            phone: None,
+            email: None,
+            address: None,
+            tax_number: None,
+            opening_balance_cents: 10_000,
+            notes: None,
+        },
+    )
+    .unwrap();
+
+    let payment = create_payment(
+        &conn,
+        user,
+        PaymentPayload {
+            party_type: "customer".to_string(),
+            party_id: customer.id,
+            amount_cents: 3_000,
+            currency: String::new(),
+            payment_method: "cash".to_string(),
+            payment_date: today_date(),
+            reference_type: None,
+            reference_id: None,
+            notes: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(party_balance(&conn, PartyKind::Customer, customer.id).unwrap(), 7_000);
+
+    delete_payment(&conn, user, payment.id).unwrap();
+    assert_eq!(party_balance(&conn, PartyKind::Customer, customer.id).unwrap(), 10_000);
+}
+
+#[test]
+fn archived_balances_remain_in_debt_totals_and_credits_do_not_offset_debt() {
+    let conn = test_conn();
+    let user = make_admin(&conn);
+    let debtor = create_party(
+        &conn,
+        user,
+        PartyKind::Customer,
+        PartyPayload {
+            name: "Archived Debtor".to_string(),
+            company_name: None,
+            phone: None,
+            email: None,
+            address: None,
+            tax_number: None,
+            opening_balance_cents: 8_000,
+            notes: None,
+        },
+    )
+    .unwrap();
+    let credit_customer = create_party(
+        &conn,
+        user,
+        PartyKind::Customer,
+        PartyPayload {
+            name: "Credit Customer".to_string(),
+            company_name: None,
+            phone: None,
+            email: None,
+            address: None,
+            tax_number: None,
+            opening_balance_cents: 0,
+            notes: None,
+        },
+    )
+    .unwrap();
+    create_payment(
+        &conn,
+        user,
+        PaymentPayload {
+            party_type: "customer".to_string(),
+            party_id: credit_customer.id,
+            amount_cents: 2_000,
+            currency: String::new(),
+            payment_method: "cash".to_string(),
+            payment_date: today_date(),
+            reference_type: None,
+            reference_id: None,
+            notes: None,
+        },
+    )
+    .unwrap();
+    archive_party(&conn, user, PartyKind::Customer, debtor.id).unwrap();
+
+    let summary = dashboard_summary(&conn, Some(today_date())).unwrap();
+    assert_eq!(summary.total_customer_debts_cents, 8_000);
+}
+
+#[test]
+fn database_rejects_orphan_payment_parties() {
+    let conn = test_conn();
+    let user = make_admin(&conn);
+    let error = conn
+        .execute(
+            "INSERT INTO payments
+             (party_type, party_id, payment_direction, amount_cents, currency, payment_method,
+              payment_date, reference_type, reference_id, notes, created_by, created_at)
+             VALUES ('customer', 999999, 'in', 1000, 'USD', 'cash', ?1, NULL, NULL, NULL, ?2, ?1)",
+            rusqlite::params![today_date(), user],
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("payment customer not found"));
+}
+
+#[test]
+fn linked_payment_delete_restores_invoice_and_rejects_the_wrong_customer() {
+    let conn = test_conn();
+    let user = make_admin(&conn);
+    let customer = create_party(
+        &conn,
+        user,
+        PartyKind::Customer,
+        PartyPayload {
+            name: "Invoice Customer".to_string(),
+            company_name: None,
+            phone: None,
+            email: None,
+            address: None,
+            tax_number: None,
+            opening_balance_cents: 0,
+            notes: None,
+        },
+    )
+    .unwrap();
+    let other_customer = create_party(
+        &conn,
+        user,
+        PartyKind::Customer,
+        PartyPayload {
+            name: "Other Customer".to_string(),
+            company_name: None,
+            phone: None,
+            email: None,
+            address: None,
+            tax_number: None,
+            opening_balance_cents: 0,
+            notes: None,
+        },
+    )
+    .unwrap();
+    let date = today_date();
+    conn.execute(
+        "INSERT INTO sales_invoices
+         (customer_id, invoice_number, invoice_date, subtotal_cents, discount_cents, tax_cents,
+          delivery_cents, total_cents, paid_cents, remaining_cents, payment_status, sales_status,
+          notes, created_by, created_at, updated_at)
+         VALUES (?1, 'SI-BALANCE-TEST', ?2, 10000, 0, 0, 0, 10000, 0, 10000,
+                 'unpaid', 'completed', NULL, ?3, ?2, ?2)",
+        rusqlite::params![customer.id, date, user],
+    )
+    .unwrap();
+    let invoice_id = conn.last_insert_rowid();
+
+    let wrong_customer_error = create_payment(
+        &conn,
+        user,
+        PaymentPayload {
+            party_type: "customer".to_string(),
+            party_id: other_customer.id,
+            amount_cents: 1_000,
+            currency: String::new(),
+            payment_method: "cash".to_string(),
+            payment_date: today_date(),
+            reference_type: Some("sales_invoice".to_string()),
+            reference_id: Some(invoice_id),
+            notes: None,
+        },
+    )
+    .unwrap_err();
+    assert_eq!(wrong_customer_error.code, "VALIDATION_ERROR");
+
+    let payment = create_payment(
+        &conn,
+        user,
+        PaymentPayload {
+            party_type: "customer".to_string(),
+            party_id: customer.id,
+            amount_cents: 4_000,
+            currency: String::new(),
+            payment_method: "cash".to_string(),
+            payment_date: today_date(),
+            reference_type: Some("sales_invoice".to_string()),
+            reference_id: Some(invoice_id),
+            notes: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(party_balance(&conn, PartyKind::Customer, customer.id).unwrap(), 6_000);
+    let remaining: i64 = conn
+        .query_row(
+            "SELECT remaining_cents FROM sales_invoices WHERE id = ?1",
+            [invoice_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(remaining, 6_000);
+
+    delete_payment(&conn, user, payment.id).unwrap();
+    assert_eq!(party_balance(&conn, PartyKind::Customer, customer.id).unwrap(), 10_000);
+    let remaining: i64 = conn
+        .query_row(
+            "SELECT remaining_cents FROM sales_invoices WHERE id = ?1",
+            [invoice_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(remaining, 10_000);
 }

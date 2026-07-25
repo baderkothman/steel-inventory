@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   Button,
+  Box,
   MenuItem,
   Paper,
   Stack,
@@ -20,8 +21,8 @@ import { PrintDialog } from "../../components/print/PrintDialog";
 import { PrintButton } from "../../components/print/PrintButton";
 import { EmptyState, LoadingState } from "../../components/feedback/PageState";
 import { reportOptions } from "../../lib/constants";
-import { money, today } from "../../lib/formatters";
-import { categoryApi, reportApi, supplierApi } from "../../lib/api";
+import { money, quantity, today } from "../../lib/formatters";
+import { categoryApi, reportApi, settingsApi, supplierApi } from "../../lib/api";
 import type { ReportFilters, ReportRow } from "../../types/report";
 
 type ReportKey = (typeof reportOptions)[number]["value"];
@@ -41,6 +42,10 @@ export function ReportsPage() {
 
   const { data: suppliers = [] } = useQuery({ queryKey: ["suppliers"], queryFn: () => supplierApi.list({ active_only: true }) });
   const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: categoryApi.list });
+  const { data: settings, isLoading: isSettingsLoading } = useQuery({
+    queryKey: ["settings"],
+    queryFn: settingsApi.get
+  });
 
   const showSupplier = supplierReports.includes(report);
   const showCategory = categoryReports.includes(report);
@@ -61,7 +66,15 @@ export function ReportsPage() {
   }
 
   function exportCsv() {
-    const csv = [columns.join(","), ...data.map((row) => columns.map((column) => csvCell(row[column])).join(","))].join("\n");
+    if (!settings) return;
+    const csv = [
+      columns.map((column) => csvCell(label(column))).join(","),
+      ...data.map((row) =>
+        columns
+          .map((column) => csvCell(formatCell(column, row[column], settings.default_currency)))
+          .join(",")
+      )
+    ].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -84,10 +97,11 @@ export function ReportsPage() {
               <PrintButton
                 targetId="report-table-print"
                 title={reportOptions.find((option) => option.value === report)?.label ?? "Report"}
-                disabled={!data.length}
+                disabled={!data.length || !settings}
+                contentHasHeader={report === "stock"}
               />
             )}
-            <Button startIcon={<DownloadIcon />} variant="contained" disabled={!data.length} onClick={exportCsv}>Export CSV</Button>
+            <Button startIcon={<DownloadIcon />} variant="contained" disabled={!data.length || !settings} onClick={exportCsv}>Export CSV</Button>
           </Stack>
         }
       />
@@ -126,12 +140,22 @@ export function ReportsPage() {
       </Paper>
 
       <Paper id="report-table-print" variant="outlined">
-        {isLoading ? <LoadingState label="Loading report" /> : data.length === 0 ? <EmptyState label="No rows for this report." /> : (
+        {isLoading || isSettingsLoading ? <LoadingState label="Loading report" /> : data.length === 0 ? <EmptyState label="No rows for this report." /> : report === "stock" && settings ? (
+          <StockRemainingReport
+            rows={data}
+            currency={settings.default_currency}
+            categoryName={
+              filters.category_id
+                ? categories.find((category) => category.id === filters.category_id)?.name
+                : undefined
+            }
+          />
+        ) : settings ? (
           <Table size="small">
             <TableHead><TableRow>{columns.map((column) => <TableCell key={column}>{label(column)}</TableCell>)}</TableRow></TableHead>
-            <TableBody>{data.map((row, index) => <TableRow key={index}>{columns.map((column) => <TableCell key={column}>{formatCell(column, row[column])}</TableCell>)}</TableRow>)}</TableBody>
+            <TableBody>{data.map((row, index) => <TableRow key={index}>{columns.map((column) => <TableCell key={column}>{formatCell(column, row[column], settings.default_currency)}</TableCell>)}</TableRow>)}</TableBody>
           </Table>
-        )}
+        ) : null}
       </Paper>
 
       <PrintDialog open={Boolean(countSheetHtml)} html={countSheetHtml} onClose={() => setCountSheetHtml("")} />
@@ -165,11 +189,155 @@ function label(value: string) {
   return value.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function formatCell(column: string, value: unknown) {
-  if (column.endsWith("_cents") && typeof value === "number") return money(value);
+function formatCell(column: string, value: unknown, currency: string) {
+  if (column.endsWith("_cents") && typeof value === "number") return money(value, currency);
   if (value === null || value === undefined) return "";
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
+}
+
+type StockRow = {
+  category: string;
+  productType: string;
+  productName: string;
+  size: string;
+  thicknessMm: number | null;
+  sellingPriceCents: number;
+  remainingQuantity: number;
+  unit: string;
+};
+
+type StockGroup = {
+  key: string;
+  category: string;
+  productType: string;
+  rows: StockRow[];
+};
+
+function StockRemainingReport({
+  rows,
+  currency,
+  categoryName
+}: {
+  rows: ReportRow[];
+  currency: string;
+  categoryName?: string;
+}) {
+  const groups = groupStockRows(rows);
+  const generated = new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short"
+  }).format(new Date());
+
+  return (
+    <Box className="stock-report">
+      <header className="stock-report__header">
+        <div>
+          <p className="stock-report__eyebrow">Inventory availability</p>
+          <h1>Stock remaining</h1>
+          <p className="stock-report__subtitle">
+            {categoryName ? `${categoryName} · ` : ""}
+            Products are grouped by category and product type.
+          </p>
+        </div>
+        <dl className="stock-report__summary">
+          <div><dt>Products</dt><dd>{rows.length}</dd></div>
+          <div><dt>Groups</dt><dd>{groups.length}</dd></div>
+          <div><dt>Updated</dt><dd>{generated}</dd></div>
+        </dl>
+      </header>
+
+      <div className="stock-report__groups">
+        {groups.map((group) => (
+          <section className="stock-group" key={group.key}>
+            <div className="stock-group__heading">
+              <div>
+                <span>{group.category}</span>
+                <h2>{titleCase(group.productType)}</h2>
+              </div>
+              <p>{group.rows.length} {group.rows.length === 1 ? "product" : "products"}</p>
+            </div>
+            <div className="stock-group__table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Product name</th>
+                    <th>Size</th>
+                    <th>Thickness</th>
+                    <th className="num">Selling price</th>
+                    <th className="num">Remaining stock</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {group.rows.map((row, index) => (
+                    <tr key={`${group.key}-${row.productName}-${row.size}-${row.thicknessMm ?? ""}-${index}`}>
+                      <td className="product-name">{row.productName}</td>
+                      <td>{row.size || "—"}</td>
+                      <td>{row.thicknessMm === null ? "—" : `${quantity(row.thicknessMm)} mm`}</td>
+                      <td className="num price">{money(row.sellingPriceCents, currency)}</td>
+                      <td className="num stock-quantity">
+                        <strong>{quantity(row.remainingQuantity)}</strong>
+                        <span>{row.unit}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        ))}
+      </div>
+    </Box>
+  );
+}
+
+function groupStockRows(rows: ReportRow[]): StockGroup[] {
+  const groups = new Map<string, StockGroup>();
+  for (const raw of rows) {
+    const row: StockRow = {
+      category: textValue(raw.category, "Uncategorized"),
+      productType: textValue(raw.product_type, "Other"),
+      productName: textValue(raw.product_name, "Unnamed product"),
+      size: textValue(raw.size),
+      thicknessMm: numberValue(raw.thickness_mm),
+      sellingPriceCents: numberValue(raw.selling_price_cents) ?? 0,
+      remainingQuantity: numberValue(raw.remaining_quantity) ?? 0,
+      unit: textValue(raw.unit)
+    };
+    const key = `${row.category}\u0000${row.productType}`;
+    const group = groups.get(key) ?? {
+      key,
+      category: row.category,
+      productType: row.productType,
+      rows: []
+    };
+    group.rows.push(row);
+    groups.set(key, group);
+  }
+
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      rows: group.rows.sort((left, right) =>
+        left.productName.localeCompare(right.productName, undefined, { numeric: true })
+      )
+    }))
+    .sort((left, right) =>
+      left.category.localeCompare(right.category, undefined, { numeric: true }) ||
+      left.productType.localeCompare(right.productType, undefined, { numeric: true })
+    );
+}
+
+function textValue(value: unknown, fallback = "") {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function numberValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function titleCase(value: string) {
+  return value.replace(/[_-]/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function csvCell(value: unknown) {
@@ -191,7 +359,6 @@ function buildStockCountSheet(rows: ReportRow[], supplierName: string, categoryN
   const body = rows
     .map(
       (row) => `<tr>
-        <td>${escapeHtml(row.sku)}</td>
         <td>${escapeHtml(row.product)}</td>
         <td>${escapeHtml(row.supplier)}</td>
         <td>${escapeHtml(row.category)}</td>
@@ -228,10 +395,10 @@ function buildStockCountSheet(rows: ReportRow[], supplierName: string, categoryN
   </div>
   <table>
     <thead><tr>
-      <th>SKU</th><th>Product</th><th>Supplier</th><th>Category</th><th>Location</th>
+      <th>Product</th><th>Supplier</th><th>Category</th><th>Location</th>
       <th>Unit</th><th>System Qty</th><th>Counted Qty</th><th>Difference</th>
     </tr></thead>
-    <tbody>${body || '<tr><td colspan="9">No products.</td></tr>'}</tbody>
+    <tbody>${body || '<tr><td colspan="8">No products.</td></tr>'}</tbody>
   </table>
   <div class="sign"><div>Prepared by: ______________________</div><div>Checked by: ______________________</div></div>
   </body></html>`;

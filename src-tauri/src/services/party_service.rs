@@ -66,6 +66,35 @@ impl PartyKind {
         }
     }
 
+    fn valid_payment_filter(self) -> &'static str {
+        match self {
+            PartyKind::Supplier => {
+                "(p.reference_type IS NULL OR (
+                    p.reference_type = 'purchase_invoice'
+                    AND EXISTS (
+                        SELECT 1
+                        FROM purchase_invoices pi
+                        WHERE pi.id = p.reference_id
+                          AND pi.supplier_id = p.party_id
+                          AND pi.status = 'active'
+                    )
+                ))"
+            }
+            PartyKind::Customer => {
+                "(p.reference_type IS NULL OR (
+                    p.reference_type = 'sales_invoice'
+                    AND EXISTS (
+                        SELECT 1
+                        FROM sales_invoices si
+                        WHERE si.id = p.reference_id
+                          AND si.customer_id = p.party_id
+                          AND si.sales_status = 'completed'
+                    )
+                ))"
+            }
+        }
+    }
+
     fn invoice_type_label(self) -> &'static str {
         match self {
             PartyKind::Supplier => "Purchase Invoice",
@@ -286,15 +315,19 @@ pub fn party_balance(conn: &Connection, kind: PartyKind, id: i64) -> Result<i64,
         kind.invoice_party_column(),
         kind.invoice_status_filter()
     );
-    let payment_sql = "SELECT COALESCE(SUM(amount_cents), 0)
-                       FROM payments
-                       WHERE party_type = ?1 AND party_id = ?2 AND payment_direction = ?3";
+    let payment_sql = format!(
+        "SELECT COALESCE(SUM(p.amount_cents), 0)
+         FROM payments p
+         WHERE p.party_type = ?1 AND p.party_id = ?2 AND p.payment_direction = ?3
+           AND {}",
+        kind.valid_payment_filter()
+    );
     let opening_sql = format!("SELECT opening_balance_cents FROM {} WHERE id = ?1", kind.table());
 
     let opening: i64 = conn.query_row(&opening_sql, [id], |row| row.get(0))?;
     let invoice_total: i64 = conn.query_row(&invoice_sql, [id], |row| row.get(0))?;
     let payment_total: i64 = conn.query_row(
-        payment_sql,
+        &payment_sql,
         params![kind.payment_party_type(), id, kind.payment_direction()],
         |row| row.get(0),
     )?;
@@ -356,14 +389,17 @@ pub fn statement(
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
-    let mut payment_stmt = conn.prepare(
-        "SELECT payment_date, id, amount_cents
-         FROM payments
-         WHERE party_type = ?1 AND party_id = ?2 AND payment_direction = ?3
-           AND (?4 IS NULL OR date(payment_date) >= date(?4))
-           AND (?5 IS NULL OR date(payment_date) <= date(?5))
-         ORDER BY payment_date, id",
-    )?;
+    let payment_sql = format!(
+        "SELECT p.payment_date, p.id, p.amount_cents
+         FROM payments p
+         WHERE p.party_type = ?1 AND p.party_id = ?2 AND p.payment_direction = ?3
+           AND {}
+           AND (?4 IS NULL OR date(p.payment_date) >= date(?4))
+           AND (?5 IS NULL OR date(p.payment_date) <= date(?5))
+         ORDER BY p.payment_date, p.id",
+        kind.valid_payment_filter()
+    );
+    let mut payment_stmt = conn.prepare(&payment_sql)?;
     let payment_rows = payment_stmt
         .query_map(
             params![
@@ -443,11 +479,16 @@ fn prior_payment_total(
     id: i64,
     date_from: &str,
 ) -> Result<i64, AppError> {
+    let sql = format!(
+        "SELECT COALESCE(SUM(p.amount_cents), 0)
+         FROM payments p
+         WHERE p.party_type = ?1 AND p.party_id = ?2 AND p.payment_direction = ?3
+           AND {}
+           AND date(p.payment_date) < date(?4)",
+        kind.valid_payment_filter()
+    );
     conn.query_row(
-        "SELECT COALESCE(SUM(amount_cents), 0)
-         FROM payments
-         WHERE party_type = ?1 AND party_id = ?2 AND payment_direction = ?3
-           AND date(payment_date) < date(?4)",
+        &sql,
         params![kind.payment_party_type(), id, kind.payment_direction(), date_from],
         |row| row.get(0),
     )

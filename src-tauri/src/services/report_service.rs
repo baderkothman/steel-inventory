@@ -247,15 +247,14 @@ pub fn stock_report(conn: &Connection, filters: ReportFilters) -> Result<Vec<Val
         .into_iter()
         .map(|p| {
             json!({
-                "sku": p.sku,
-                "product": p.name,
-                "supplier": p.supplier_name,
                 "category": p.category_name,
+                "product_type": p.product_type,
+                "product_name": p.name,
+                "size": p.size_label,
+                "thickness_mm": p.thickness_mm,
+                "selling_price_cents": p.selling_price_cents,
+                "remaining_quantity": p.current_quantity,
                 "unit": p.unit,
-                "current_quantity": p.current_quantity,
-                "minimum_quantity": p.minimum_quantity,
-                "cost_price_cents": p.cost_price_cents,
-                "stock_value_cents": (p.current_quantity * p.cost_price_cents as f64).round() as i64
             })
         })
         .collect())
@@ -284,7 +283,6 @@ pub fn stock_count_report(conn: &Connection, filters: ReportFilters) -> Result<V
         .filter(|p| !low_only || p.current_quantity <= p.minimum_quantity)
         .map(|p| {
             json!({
-                "sku": p.sku,
                 "product": p.name,
                 "supplier": p.supplier_name,
                 "category": p.category_name,
@@ -427,12 +425,28 @@ pub fn cheapest_supplier_report(conn: &Connection, filters: ReportFilters) -> Re
 }
 
 pub fn low_stock_report(conn: &Connection) -> Result<Vec<Value>, AppError> {
-    Ok(stock_report(conn, ReportFilters::default())?
+    let products = list_products(
+        conn,
+        ProductFilters {
+            search: None,
+            category_id: None,
+            supplier_id: None,
+            active_only: Some(true),
+        },
+    )?;
+    Ok(products
         .into_iter()
-        .filter(|row| {
-            let current = row["current_quantity"].as_f64().unwrap_or_default();
-            let minimum = row["minimum_quantity"].as_f64().unwrap_or_default();
-            current <= minimum
+        .filter(|p| p.current_quantity <= p.minimum_quantity)
+        .map(|p| {
+            json!({
+                "product": p.name,
+                "category": p.category_name,
+                "size": p.size_label,
+                "thickness_mm": p.thickness_mm,
+                "current_quantity": p.current_quantity,
+                "minimum_quantity": p.minimum_quantity,
+                "unit": p.unit
+            })
         })
         .collect())
 }
@@ -505,7 +519,28 @@ pub fn payment_report(conn: &Connection, filters: ReportFilters) -> Result<Vec<V
 }
 
 pub fn inventory_value_report(conn: &Connection) -> Result<Vec<Value>, AppError> {
-    stock_report(conn, ReportFilters::default())
+    let products = list_products(
+        conn,
+        ProductFilters {
+            search: None,
+            category_id: None,
+            supplier_id: None,
+            active_only: Some(true),
+        },
+    )?;
+    Ok(products
+        .into_iter()
+        .map(|p| {
+            json!({
+                "product": p.name,
+                "category": p.category_name,
+                "unit": p.unit,
+                "current_quantity": p.current_quantity,
+                "cost_price_cents": p.cost_price_cents,
+                "stock_value_cents": (p.current_quantity * p.cost_price_cents as f64).round() as i64
+            })
+        })
+        .collect())
 }
 
 pub fn best_selling_products_report(conn: &Connection, filters: ReportFilters) -> Result<Vec<Value>, AppError> {
@@ -568,7 +603,9 @@ fn debt_report(conn: &Connection, kind: PartyKind, _filters: ReportFilters) -> R
         kind,
         PartyFilters {
             search: None,
-            active_only: Some(true),
+            // Archiving changes whether a party can be selected for new work; it
+            // must not remove a real outstanding balance from accounting reports.
+            active_only: Some(false),
         },
     )?;
     Ok(parties
@@ -591,12 +628,14 @@ fn total_debt(conn: &Connection, kind: PartyKind) -> Result<i64, AppError> {
         kind,
         PartyFilters {
             search: None,
-            active_only: Some(true),
+            active_only: Some(false),
         },
     )?;
     let mut total = 0;
     for party in parties {
-        total += party_balance(conn, kind, party.id)?;
+        // A party credit is real, but it is not debt and must not cancel out
+        // another party's outstanding balance in the dashboard total.
+        total += party_balance(conn, kind, party.id)?.max(0);
     }
     Ok(total)
 }
