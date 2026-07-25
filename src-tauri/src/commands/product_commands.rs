@@ -49,6 +49,13 @@ pub fn archive_product(state: State<'_, AppState>, id: i64) -> Result<(), AppErr
 }
 
 #[tauri::command]
+pub fn delete_product(state: State<'_, AppState>, id: i64) -> Result<(), AppError> {
+    let user_id = state.require_user_id()?;
+    let conn = state.open_conn()?;
+    product_service::delete_product(&conn, user_id, id)
+}
+
+#[tauri::command]
 pub fn get_product(state: State<'_, AppState>, id: i64) -> Result<ProductRow, AppError> {
     state.require_user_id()?;
     let conn = state.open_conn()?;

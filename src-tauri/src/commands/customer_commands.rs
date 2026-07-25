@@ -29,6 +29,13 @@ pub fn archive_customer(state: State<'_, AppState>, id: i64) -> Result<(), AppEr
 }
 
 #[tauri::command]
+pub fn delete_customer(state: State<'_, AppState>, id: i64) -> Result<(), AppError> {
+    let user_id = state.require_user_id()?;
+    let conn = state.open_conn()?;
+    party_service::delete_party(&conn, user_id, PartyKind::Customer, id)
+}
+
+#[tauri::command]
 pub fn get_customer(state: State<'_, AppState>, id: i64) -> Result<PartyRow, AppError> {
     state.require_user_id()?;
     let conn = state.open_conn()?;

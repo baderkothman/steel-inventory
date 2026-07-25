@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { PageHeader } from "../../components/PageHeader";
 import { EmptyState, LoadingState } from "../../components/feedback/PageState";
+import { PrintButton } from "../../components/print/PrintButton";
 import { backupApi } from "../../lib/api";
 
 export function BackupPage() {
@@ -36,7 +37,11 @@ export function BackupPage() {
 
   return (
     <Stack spacing={2}>
-      <PageHeader title="Backup" description="Create manual backups and restore local SQLite database files." />
+      <PageHeader
+        title="Backup"
+        description="Create manual backups and restore local SQLite database files."
+        actions={<PrintButton targetId="backup-log-print" title="Backup History" disabled={!data.length} />}
+      />
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
           <Button startIcon={<BackupIcon />} variant="contained" disabled={backupMutation.isPending} onClick={() => backupMutation.mutate()}>Create manual backup</Button>
@@ -45,7 +50,7 @@ export function BackupPage() {
           <Button color="warning" startIcon={<RestoreIcon />} variant="contained" disabled={!restorePath || restoreMutation.isPending} onClick={restore}>Restore</Button>
         </Stack>
       </Paper>
-      <Paper variant="outlined">
+      <Paper id="backup-log-print" variant="outlined">
         {isLoading ? <LoadingState label="Loading backups" /> : data.length === 0 ? <EmptyState label="No backups recorded." /> : (
           <Table size="small">
             <TableHead><TableRow><TableCell>Date</TableCell><TableCell>Type</TableCell><TableCell>Status</TableCell><TableCell>Path</TableCell><TableCell>Notes</TableCell></TableRow></TableHead>

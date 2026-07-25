@@ -7,6 +7,7 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  Divider,
   Drawer,
   MenuItem,
   Paper,
@@ -14,12 +15,15 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableRow,
-  TextField
+  TextField,
+  Typography
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
 import ArchiveIcon from "@mui/icons-material/Archive";
+import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
 import HistoryIcon from "@mui/icons-material/History";
 import TuneIcon from "@mui/icons-material/Tune";
@@ -29,6 +33,7 @@ import { MoneyText } from "../../components/MoneyText";
 import { PageHeader } from "../../components/PageHeader";
 import { ConfirmDialog } from "../../components/feedback/ConfirmDialog";
 import { EmptyState, LoadingState } from "../../components/feedback/PageState";
+import { PrintButton } from "../../components/print/PrintButton";
 import { categoryApi, productApi, supplierApi } from "../../lib/api";
 import { finishes, materials, productTypes, shapes, units } from "../../lib/constants";
 import { fromCents, quantity, toCents } from "../../lib/formatters";
@@ -74,6 +79,8 @@ export function ProductsPage() {
   const [supplierId, setSupplierId] = useState<number | "">("");
   const [form, setForm] = useState<ProductForm | null>(null);
   const [archiveId, setArchiveId] = useState<number | null>(null);
+  const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [movementProduct, setMovementProduct] = useState<Product | null>(null);
   const [adjustProduct, setAdjustProduct] = useState<Product | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -115,6 +122,17 @@ export function ProductsPage() {
     }
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => productApi.delete(id),
+    onSuccess: async () => {
+      setDeleteId(null);
+      setDeleteError(null);
+      await queryClient.invalidateQueries({ queryKey: ["products"] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+    onError: (err) => setDeleteError(normalizeError(err).message)
+  });
+
   function submit(event: FormEvent) {
     event.preventDefault();
     if (form) {
@@ -136,13 +154,16 @@ export function ProductsPage() {
         title="Products"
         description="Manage SKUs, steel dimensions, prices, stock levels, and movement history."
         actions={
-          <Button
-            startIcon={<AddIcon />}
-            variant="contained"
-            onClick={() => setForm({ ...blankProduct, category_id: activeCategories[0]?.id ?? 0 })}
-          >
-            Add product
-          </Button>
+          <Stack direction="row" spacing={1}>
+            <PrintButton targetId="products-print" title="Product Stock & Cost" subtitle={`${products.length} products`} disabled={!products.length} />
+            <Button
+              startIcon={<AddIcon />}
+              variant="contained"
+              onClick={() => setForm({ ...blankProduct, category_id: activeCategories[0]?.id ?? 0 })}
+            >
+              Add product
+            </Button>
+          </Stack>
         }
       />
 
@@ -180,7 +201,7 @@ export function ProductsPage() {
         </Stack>
       </Paper>
 
-      <Paper variant="outlined">
+      <Paper id="products-print" variant="outlined">
         {products.length === 0 ? (
           <EmptyState label="No products found." />
         ) : (
@@ -190,13 +211,13 @@ export function ProductsPage() {
                 <TableCell>SKU</TableCell>
                 <TableCell>Product</TableCell>
                 <TableCell>Supplier</TableCell>
-                <TableCell>Category</TableCell>
                 <TableCell>Size</TableCell>
-                <TableCell align="right">Stock</TableCell>
-                <TableCell align="right">Cost</TableCell>
-                <TableCell align="right">Selling</TableCell>
+                <TableCell>Thickness</TableCell>
+                <TableCell align="right">Stock remaining</TableCell>
+                <TableCell align="right">Unit cost</TableCell>
+                <TableCell align="right">Total cost</TableCell>
                 <TableCell>Status</TableCell>
-                <TableCell align="right">Actions</TableCell>
+                <TableCell className="print-exclude" align="right">Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -205,23 +226,37 @@ export function ProductsPage() {
                   <TableCell>{product.sku}</TableCell>
                   <TableCell>{product.name}</TableCell>
                   <TableCell>{product.supplier_name}</TableCell>
-                  <TableCell>{product.category_name}</TableCell>
-                  <TableCell>
-                    {product.size_label} {product.thickness_mm ? `${product.thickness_mm}mm` : ""}
-                  </TableCell>
+                  <TableCell>{product.size_label || "—"}</TableCell>
+                  <TableCell>{product.thickness_mm ? `${quantity(product.thickness_mm)} mm` : "—"}</TableCell>
                   <TableCell align="right">{quantity(product.current_quantity)}</TableCell>
                   <TableCell align="right"><MoneyText value={product.cost_price_cents} /></TableCell>
-                  <TableCell align="right"><MoneyText value={product.selling_price_cents} /></TableCell>
+                  <TableCell align="right"><MoneyText value={Math.round(product.current_quantity * product.cost_price_cents)} /></TableCell>
                   <TableCell>{product.is_active ? "Active" : "Archived"}</TableCell>
-                  <TableCell align="right">
+                  <TableCell className="print-exclude" align="right">
                     <Button size="small" startIcon={<EditIcon />} onClick={() => setForm(productToForm(product))}>Edit</Button>
                     <Button size="small" startIcon={<TuneIcon />} onClick={() => setAdjustProduct(product)}>Adjust</Button>
                     <Button size="small" startIcon={<HistoryIcon />} onClick={() => setMovementProduct(product)}>Movement</Button>
                     <Button size="small" color="warning" startIcon={<ArchiveIcon />} disabled={!product.is_active} onClick={() => setArchiveId(product.id)}>Archive</Button>
+                    <Button size="small" color="error" startIcon={<DeleteIcon />} onClick={() => {
+                      setDeleteError(null);
+                      setDeleteId(product.id);
+                    }}>Delete</Button>
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
+            <TableFooter>
+              <TableRow>
+                <TableCell colSpan={7} align="right" sx={{ fontWeight: 700 }}>
+                  Total inventory cost
+                </TableCell>
+                <TableCell align="right" sx={{ fontWeight: 700 }}>
+                  <MoneyText value={products.reduce((total, product) => total + Math.round(product.current_quantity * product.cost_price_cents), 0)} />
+                </TableCell>
+                <TableCell />
+                <TableCell className="print-exclude" />
+              </TableRow>
+            </TableFooter>
           </Table>
         )}
       </Paper>
@@ -245,6 +280,19 @@ export function ProductsPage() {
         confirmLabel="Archive"
         onClose={() => setArchiveId(null)}
         onConfirm={() => archiveId && archiveMutation.mutate(archiveId)}
+      />
+      <ConfirmDialog
+        open={deleteId !== null}
+        title="Permanently delete product"
+        message="This permanently removes the product, its stock level, price history, and manual movements. Products used on invoices cannot be deleted."
+        confirmLabel="Delete permanently"
+        error={deleteError}
+        loading={deleteMutation.isPending}
+        onClose={() => {
+          setDeleteId(null);
+          setDeleteError(null);
+        }}
+        onConfirm={() => deleteId && deleteMutation.mutate(deleteId)}
       />
     </Stack>
   );
@@ -275,33 +323,47 @@ function ProductDialog({
       <DialogContent>
         <Stack component="form" id="product-form" onSubmit={onSubmit} spacing={2} sx={{ pt: 1 }}>
           {error ? <Alert severity="error">{error}</Alert> : null}
+          <Box>
+            <Typography variant="h6">Required product details</Typography>
+            <Typography variant="body2" color="text.secondary">
+              Complete these fields before saving.
+            </Typography>
+          </Box>
           <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "repeat(3, 1fr)" }, gap: 2 }}>
-            <TextField label="SKU" value={form?.sku ?? ""} onChange={(e) => onChange(form && { ...form, sku: e.target.value })} helperText="Leave blank to auto-generate" />
             <TextField label="Product name" required value={form?.name ?? ""} onChange={(e) => onChange(form && { ...form, name: e.target.value })} />
             <TextField select label="Category" required value={form?.category_id || ""} onChange={(e) => onChange(form && { ...form, category_id: Number(e.target.value) })}>
               {categories.map((category) => <MenuItem key={category.id} value={category.id}>{category.name}</MenuItem>)}
             </TextField>
-            <TextField select label="Supplier" value={form?.supplier_id ?? ""} onChange={(e) => onChange(form && { ...form, supplier_id: e.target.value ? Number(e.target.value) : null })} helperText="Defaults to Unknown Supplier if left blank">
-              <MenuItem value="">Unknown Supplier</MenuItem>
+            <TextField select label="Supplier" required value={form?.supplier_id ?? ""} onChange={(e) => onChange(form && { ...form, supplier_id: e.target.value ? Number(e.target.value) : null })}>
               {suppliers.map((supplier) => <MenuItem key={supplier.id} value={supplier.id}>{supplier.name}</MenuItem>)}
             </TextField>
-            <TextField label="Location" value={form?.location ?? ""} onChange={(e) => onChange(form && { ...form, location: e.target.value })} helperText="Storage area (optional)" />
-            <SelectField label="Type" value={form?.product_type ?? ""} values={productTypes} onChange={(value) => onChange(form && { ...form, product_type: value })} />
-            <SelectField label="Material" value={form?.material ?? ""} values={materials} onChange={(value) => onChange(form && { ...form, material: value })} />
-            <SelectField label="Shape" value={form?.shape ?? ""} values={shapes} onChange={(value) => onChange(form && { ...form, shape: value })} />
-            <SelectField label="Finish" value={form?.finish ?? ""} values={finishes} onChange={(value) => onChange(form && { ...form, finish: value })} />
+            <SelectField label="Type" required value={form?.product_type ?? ""} values={productTypes} onChange={(value) => onChange(form && { ...form, product_type: value })} />
+            <SelectField label="Material" required value={form?.material ?? ""} values={materials} onChange={(value) => onChange(form && { ...form, material: value })} />
+            <SelectField label="Shape" required value={form?.shape ?? ""} values={shapes} onChange={(value) => onChange(form && { ...form, shape: value })} />
+            <SelectField label="Finish" required value={form?.finish ?? ""} values={finishes} onChange={(value) => onChange(form && { ...form, finish: value })} />
+            <NumberField label="Thickness mm" required min={0.001} value={form?.thickness_mm} onChange={(value) => onChange(form && { ...form, thickness_mm: value })} />
+            <NumberField label="Minimum stock" required min={0} value={form?.minimum_quantity} onChange={(value) => onChange(form && { ...form, minimum_quantity: value ?? 0 })} />
+            <TextField label="Cost price" type="number" required slotProps={{ htmlInput: { min: 0, step: "0.01" } }} value={form?.cost_price ?? "0.00"} onChange={(e) => onChange(form && { ...form, cost_price: e.target.value })} />
+            <TextField label="Selling price" type="number" required slotProps={{ htmlInput: { min: 0, step: "0.01" } }} value={form?.selling_price ?? "0.00"} onChange={(e) => onChange(form && { ...form, selling_price: e.target.value })} />
+            <TextField label="Wholesale price" type="number" required slotProps={{ htmlInput: { min: 0, step: "0.01" } }} value={form?.wholesale_price ?? "0.00"} onChange={(e) => onChange(form && { ...form, wholesale_price: e.target.value })} />
+          </Box>
+          <Divider />
+          <Box>
+            <Typography variant="h6">Optional details</Typography>
+            <Typography variant="body2" color="text.secondary">
+              Add dimensions, storage, and notes when they apply to this product.
+            </Typography>
+          </Box>
+          <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "repeat(3, 1fr)" }, gap: 2 }}>
+            <TextField label="SKU" value={form?.sku ?? ""} onChange={(e) => onChange(form && { ...form, sku: e.target.value })} helperText="Leave blank to auto-generate" />
+            <TextField label="Location" value={form?.location ?? ""} onChange={(e) => onChange(form && { ...form, location: e.target.value })} />
             <TextField label="Size label" value={form?.size_label ?? ""} onChange={(e) => onChange(form && { ...form, size_label: e.target.value })} />
             <SelectField label="Unit" value={form?.unit ?? ""} values={units} onChange={(value) => onChange(form && { ...form, unit: value })} />
             <NumberField label="Width mm" value={form?.width_mm} onChange={(value) => onChange(form && { ...form, width_mm: value })} />
             <NumberField label="Height mm" value={form?.height_mm} onChange={(value) => onChange(form && { ...form, height_mm: value })} />
             <NumberField label="Diameter mm" value={form?.diameter_mm} onChange={(value) => onChange(form && { ...form, diameter_mm: value })} />
-            <NumberField label="Thickness mm" value={form?.thickness_mm} onChange={(value) => onChange(form && { ...form, thickness_mm: value })} />
             <NumberField label="Length mm" value={form?.length_mm} onChange={(value) => onChange(form && { ...form, length_mm: value })} />
-            <NumberField label="Minimum stock" value={form?.minimum_quantity} onChange={(value) => onChange(form && { ...form, minimum_quantity: value ?? 0 })} />
-            <TextField label="Cost price" value={form?.cost_price ?? "0.00"} onChange={(e) => onChange(form && { ...form, cost_price: e.target.value })} />
-            <TextField label="Selling price" value={form?.selling_price ?? "0.00"} onChange={(e) => onChange(form && { ...form, selling_price: e.target.value })} />
-            <TextField label="Wholesale price" value={form?.wholesale_price ?? "0.00"} onChange={(e) => onChange(form && { ...form, wholesale_price: e.target.value })} />
-            {!form?.id ? <NumberField label="Initial quantity" value={form?.initial_quantity} onChange={(value) => onChange(form && { ...form, initial_quantity: value ?? 0 })} /> : null}
+            {!form?.id ? <NumberField label="Initial quantity" min={0} value={form?.initial_quantity} onChange={(value) => onChange(form && { ...form, initial_quantity: value ?? 0 })} /> : null}
           </Box>
           <TextField label="Description" multiline minRows={2} value={form?.description ?? ""} onChange={(e) => onChange(form && { ...form, description: e.target.value })} />
         </Stack>
@@ -324,9 +386,13 @@ function MovementDrawer({ product, onClose }: { product: Product | null; onClose
   return (
     <Drawer anchor="right" open={Boolean(product)} onClose={onClose}>
       <Box sx={{ width: 620, p: 3 }}>
-        <PageHeader title="Stock movement" description={product?.name} />
+        <PageHeader
+          title="Stock movement"
+          description={product?.name}
+          actions={<PrintButton targetId="movement-print" title="Stock Movement" subtitle={product?.name} disabled={!data.length} />}
+        />
         {isLoading ? <LoadingState /> : data.length === 0 ? <EmptyState label="No movement recorded." /> : (
-          <Table size="small">
+          <Table id="movement-print" size="small">
             <TableHead><TableRow><TableCell>Date</TableCell><TableCell>Type</TableCell><TableCell align="right">In</TableCell><TableCell align="right">Out</TableCell><TableCell>Notes</TableCell></TableRow></TableHead>
             <TableBody>{data.map((row) => <TableRow key={row.id}><TableCell>{row.created_at.slice(0, 10)}</TableCell><TableCell>{row.transaction_type}</TableCell><TableCell align="right">{quantity(row.quantity_in)}</TableCell><TableCell align="right">{quantity(row.quantity_out)}</TableCell><TableCell>{row.notes}</TableCell></TableRow>)}</TableBody>
           </Table>
@@ -373,16 +439,16 @@ function StockAdjustDialog({ product, onClose }: { product: Product | null; onCl
   );
 }
 
-function SelectField<T extends readonly string[]>({ label, value, values, onChange }: { label: string; value: string; values: T; onChange: (value: string) => void }) {
+function SelectField<T extends readonly string[]>({ label, value, values, required = false, onChange }: { label: string; value: string; values: T; required?: boolean; onChange: (value: string) => void }) {
   return (
-    <TextField select label={label} value={value} onChange={(e) => onChange(e.target.value)}>
+    <TextField select label={label} required={required} value={value} onChange={(e) => onChange(e.target.value)}>
       {values.map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}
     </TextField>
   );
 }
 
-function NumberField({ label, value, onChange }: { label: string; value?: number | null; onChange: (value: number | null) => void }) {
-  return <TextField label={label} type="number" value={value ?? ""} onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))} />;
+function NumberField({ label, value, required = false, min = 0.001, onChange }: { label: string; value?: number | null; required?: boolean; min?: number; onChange: (value: number | null) => void }) {
+  return <TextField label={label} type="number" required={required} slotProps={{ htmlInput: { min, step: "any" } }} value={value ?? ""} onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))} />;
 }
 
 function formToPayload(form: ProductForm): ProductPayload {

@@ -28,6 +28,7 @@ import { PageHeader } from "../../components/PageHeader";
 import { ConfirmDialog } from "../../components/feedback/ConfirmDialog";
 import { EmptyState, LoadingState } from "../../components/feedback/PageState";
 import { PrintDialog } from "../../components/print/PrintDialog";
+import { PrintButton } from "../../components/print/PrintButton";
 import { customerApi, productApi, purchaseApi, salesApi, supplierApi } from "../../lib/api";
 import { fromCents, quantity, toCents, today } from "../../lib/formatters";
 import { normalizeError } from "../../lib/tauri";
@@ -158,13 +159,18 @@ function InvoicePage({ kind }: { kind: Kind }) {
       <PageHeader
         title={title}
         description={kind === "purchase" ? "Record supplier invoices and increase stock." : "Create customer invoices and decrease stock."}
-        actions={<Button startIcon={<AddIcon />} variant="contained" onClick={() => setForm({ ...emptyForm })}>New invoice</Button>}
+        actions={
+          <Stack direction="row" spacing={1}>
+            <PrintButton targetId={`${kind}-invoice-list-print`} title={title} subtitle={`${invoices.length} invoices`} disabled={!invoices.length} />
+            <Button startIcon={<AddIcon />} variant="contained" onClick={() => setForm({ ...emptyForm })}>New invoice</Button>
+          </Stack>
+        }
       />
 
-      <Paper variant="outlined">
+      <Paper id={`${kind}-invoice-list-print`} variant="outlined">
         {invoices.length === 0 ? <EmptyState label="No invoices recorded yet." /> : (
           <Table size="small">
-            <TableHead><TableRow><TableCell>Invoice</TableCell><TableCell>Date</TableCell><TableCell>{partyLabel}</TableCell><TableCell align="right">Total</TableCell><TableCell align="right">Paid</TableCell><TableCell align="right">Remaining</TableCell><TableCell>Status</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead>
+            <TableHead><TableRow><TableCell>Invoice</TableCell><TableCell>Date</TableCell><TableCell>{partyLabel}</TableCell><TableCell align="right">Total</TableCell><TableCell align="right">Paid</TableCell><TableCell align="right">Remaining</TableCell><TableCell>Status</TableCell><TableCell className="print-exclude" align="right">Actions</TableCell></TableRow></TableHead>
             <TableBody>{invoices.map((invoice) => <InvoiceRow key={invoice.id} invoice={invoice} onPrint={printInvoice} onCancel={setCancelId} />)}</TableBody>
           </Table>
         )}
@@ -208,7 +214,7 @@ function InvoiceRow({ invoice, onPrint, onCancel }: { invoice: InvoiceListRow; o
       <TableCell align="right"><MoneyText value={invoice.paid_cents} /></TableCell>
       <TableCell align="right"><MoneyText value={invoice.remaining_cents} /></TableCell>
       <TableCell>{invoice.status} / {invoice.payment_status}</TableCell>
-      <TableCell align="right">
+      <TableCell className="print-exclude" align="right">
         <Button size="small" startIcon={<PrintIcon />} onClick={() => onPrint(invoice.id)}>Print</Button>
         <Button size="small" color="error" startIcon={<CancelIcon />} disabled={invoice.status === "cancelled"} onClick={() => onCancel(invoice.id)}>Cancel</Button>
       </TableCell>

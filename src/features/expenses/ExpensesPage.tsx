@@ -25,6 +25,7 @@ import { MoneyText } from "../../components/MoneyText";
 import { PageHeader } from "../../components/PageHeader";
 import { ConfirmDialog } from "../../components/feedback/ConfirmDialog";
 import { EmptyState, LoadingState } from "../../components/feedback/PageState";
+import { PrintButton } from "../../components/print/PrintButton";
 import { expenseApi } from "../../lib/api";
 import { paymentMethods } from "../../lib/constants";
 import { fromCents, toCents, today } from "../../lib/formatters";
@@ -82,13 +83,18 @@ export function ExpensesPage() {
       <PageHeader
         title="Expenses"
         description="Record business expenses by category, date, and payment method."
-        actions={<Button startIcon={<AddIcon />} variant="contained" onClick={() => setForm({ ...blankForm, expense_category_id: categories[0]?.id ?? 0 })}>Add expense</Button>}
+        actions={
+          <Stack direction="row" spacing={1}>
+            <PrintButton targetId="expenses-print" title="Expenses" subtitle={`${expenses.length} records`} disabled={!expenses.length} />
+            <Button startIcon={<AddIcon />} variant="contained" onClick={() => setForm({ ...blankForm, expense_category_id: categories[0]?.id ?? 0 })}>Add expense</Button>
+          </Stack>
+        }
       />
-      <Paper variant="outlined">
+      <Paper id="expenses-print" variant="outlined">
         {expenses.length === 0 ? <EmptyState label="No expenses recorded." /> : (
           <Table size="small">
-            <TableHead><TableRow><TableCell>Date</TableCell><TableCell>Category</TableCell><TableCell>Title</TableCell><TableCell>Method</TableCell><TableCell align="right">Amount</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead>
-            <TableBody>{expenses.map((expense) => <TableRow key={expense.id} hover><TableCell>{expense.expense_date}</TableCell><TableCell>{expense.category_name}</TableCell><TableCell>{expense.title}</TableCell><TableCell>{expense.payment_method}</TableCell><TableCell align="right"><MoneyText value={expense.amount_cents} currency={expense.currency} /></TableCell><TableCell align="right"><Button size="small" startIcon={<EditIcon />} onClick={() => setForm(rowToForm(expense))}>Edit</Button><Button size="small" color="error" startIcon={<DeleteIcon />} onClick={() => setDeleteId(expense.id)}>Delete</Button></TableCell></TableRow>)}</TableBody>
+            <TableHead><TableRow><TableCell>Date</TableCell><TableCell>Category</TableCell><TableCell>Title</TableCell><TableCell>Method</TableCell><TableCell align="right">Amount</TableCell><TableCell className="print-exclude" align="right">Actions</TableCell></TableRow></TableHead>
+            <TableBody>{expenses.map((expense) => <TableRow key={expense.id} hover><TableCell>{expense.expense_date}</TableCell><TableCell>{expense.category_name}</TableCell><TableCell>{expense.title}</TableCell><TableCell>{expense.payment_method}</TableCell><TableCell align="right"><MoneyText value={expense.amount_cents} currency={expense.currency} /></TableCell><TableCell className="print-exclude" align="right"><Button size="small" startIcon={<EditIcon />} onClick={() => setForm(rowToForm(expense))}>Edit</Button><Button size="small" color="error" startIcon={<DeleteIcon />} onClick={() => setDeleteId(expense.id)}>Delete</Button></TableCell></TableRow>)}</TableBody>
           </Table>
         )}
       </Paper>

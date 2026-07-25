@@ -9,7 +9,7 @@ use crate::{
     services::{
         auth_service::setup_admin,
         party_service::{create_party, PartyKind},
-        product_service::create_product,
+        product_service::{create_product, delete_product},
         purchase_service::create_purchase_invoice,
         sales_service::create_sales_invoice,
         seed_service::seed_demo_data,
@@ -608,4 +608,65 @@ fn missing_supplier_falls_back_to_unknown_supplier() {
     let product = create_product(&conn, user, round_pipe_payload(None, "RP-Unknown", 1000, 1500)).unwrap();
     assert_eq!(product.supplier_name, "Unknown Supplier");
     assert!(product.supplier_id.is_some());
+}
+
+#[test]
+fn unused_product_can_be_permanently_deleted_with_its_stock_records() {
+    let conn = test_conn();
+    let user = make_admin(&conn);
+    let supplier = make_supplier(&conn, user, "Delete Test Supplier");
+    let product = create_product(
+        &conn,
+        user,
+        round_pipe_payload(Some(supplier), "Unused Product", 1000, 1500),
+    )
+    .unwrap();
+
+    delete_product(&conn, user, product.id).unwrap();
+
+    let product_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM products WHERE id = ?1", [product.id], |row| row.get(0))
+        .unwrap();
+    let stock_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM stock_levels WHERE product_id = ?1", [product.id], |row| row.get(0))
+        .unwrap();
+    assert_eq!(product_count, 0);
+    assert_eq!(stock_count, 0);
+}
+
+#[test]
+fn invoiced_product_must_be_archived_instead_of_deleted() {
+    let conn = test_conn();
+    let user = make_admin(&conn);
+    let supplier = make_supplier(&conn, user, "History Supplier");
+    let product = create_product(
+        &conn,
+        user,
+        round_pipe_payload(Some(supplier), "Invoiced Product", 1000, 1500),
+    )
+    .unwrap();
+    create_purchase_invoice(
+        &conn,
+        user,
+        PurchaseInvoicePayload {
+            supplier_id: supplier,
+            invoice_number: Some("PI-DELETE-GUARD".to_string()),
+            invoice_date: today_date(),
+            discount_cents: 0,
+            tax_cents: 0,
+            shipping_cents: 0,
+            paid_cents: 0,
+            notes: None,
+            items: vec![PurchaseItemPayload {
+                product_id: product.id,
+                quantity: 1.0,
+                unit_cost_cents: 1000,
+            }],
+        },
+    )
+    .unwrap();
+
+    let error = delete_product(&conn, user, product.id).unwrap_err();
+    assert_eq!(error.code, "VALIDATION_ERROR");
+    assert!(error.message.contains("Archive it instead"));
 }

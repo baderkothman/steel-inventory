@@ -276,6 +276,31 @@ pub fn archive_product(conn: &Connection, user_id: i64, id: i64) -> Result<(), A
     Ok(())
 }
 
+pub fn delete_product(conn: &Connection, user_id: i64, id: i64) -> Result<(), AppError> {
+    ensure_product_exists(conn, id)?;
+    let invoice_item_count: i64 = conn.query_row(
+        "SELECT
+            (SELECT COUNT(*) FROM purchase_invoice_items WHERE product_id = ?1) +
+            (SELECT COUNT(*) FROM sales_invoice_items WHERE product_id = ?1)",
+        [id],
+        |row| row.get(0),
+    )?;
+    if invoice_item_count > 0 {
+        return Err(AppError::validation(
+            "This product appears on an invoice and cannot be permanently deleted. Archive it instead.",
+        ));
+    }
+
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM inventory_transactions WHERE product_id = ?1", [id])?;
+    tx.execute("DELETE FROM stock_levels WHERE product_id = ?1", [id])?;
+    tx.execute("DELETE FROM product_prices WHERE product_id = ?1", [id])?;
+    tx.execute("DELETE FROM products WHERE id = ?1", [id])?;
+    insert_audit_log(&tx, user_id, "delete", "products", id, None, None)?;
+    tx.commit()?;
+    Ok(())
+}
+
 pub fn product_stock(conn: &Connection, product_id: i64) -> Result<f64, AppError> {
     crate::services::inventory_service::current_stock(conn, product_id)
 }

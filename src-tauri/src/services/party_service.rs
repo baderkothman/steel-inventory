@@ -231,6 +231,54 @@ pub fn archive_party(
     Ok(())
 }
 
+pub fn delete_party(
+    conn: &Connection,
+    user_id: i64,
+    kind: PartyKind,
+    id: i64,
+) -> Result<(), AppError> {
+    ensure_party_exists(conn, kind, id)?;
+    let invoice_sql = format!(
+        "SELECT COUNT(*) FROM {} WHERE {} = ?1",
+        kind.invoice_table(),
+        kind.invoice_party_column()
+    );
+    let invoice_count: i64 = conn.query_row(&invoice_sql, [id], |row| row.get(0))?;
+    let payment_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM payments WHERE party_type = ?1 AND party_id = ?2",
+        params![kind.payment_party_type(), id],
+        |row| row.get(0),
+    )?;
+    let extra_reference_count: i64 = match kind {
+        PartyKind::Supplier => {
+            let product_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM products WHERE supplier_id = ?1",
+                [id],
+                |row| row.get(0),
+            )?;
+            let settlement_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM supplier_settlement_payments WHERE supplier_id = ?1",
+                [id],
+                |row| row.get(0),
+            )?;
+            product_count + settlement_count
+        }
+        PartyKind::Customer => 0,
+    };
+
+    if invoice_count + payment_count + extra_reference_count > 0 {
+        return Err(AppError::validation(format!(
+            "This {} has inventory or financial history and cannot be permanently deleted. Archive it instead.",
+            kind.payment_party_type()
+        )));
+    }
+
+    let sql = format!("DELETE FROM {} WHERE id = ?1", kind.table());
+    conn.execute(&sql, [id])?;
+    insert_audit_log(conn, user_id, "delete", kind.table(), id, None, None)?;
+    Ok(())
+}
+
 pub fn party_balance(conn: &Connection, kind: PartyKind, id: i64) -> Result<i64, AppError> {
     let invoice_sql = format!(
         "SELECT COALESCE(SUM(total_cents), 0) FROM {} WHERE {} = ?1 AND {}",

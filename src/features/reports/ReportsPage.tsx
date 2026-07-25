@@ -17,6 +17,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { PageHeader } from "../../components/PageHeader";
 import { PrintDialog } from "../../components/print/PrintDialog";
+import { PrintButton } from "../../components/print/PrintButton";
 import { EmptyState, LoadingState } from "../../components/feedback/PageState";
 import { reportOptions } from "../../lib/constants";
 import { money, today } from "../../lib/formatters";
@@ -70,10 +71,6 @@ export function ReportsPage() {
     URL.revokeObjectURL(url);
   }
 
-  function printReport() {
-    window.print();
-  }
-
   return (
     <Stack spacing={2}>
       <PageHeader
@@ -84,7 +81,11 @@ export function ReportsPage() {
             {report === "stock_count" ? (
               <Button startIcon={<PrintIcon />} variant="outlined" disabled={!data.length} onClick={printStockCount}>Print count sheet</Button>
             ) : (
-              <Button startIcon={<PrintIcon />} onClick={printReport}>Print</Button>
+              <PrintButton
+                targetId="report-table-print"
+                title={reportOptions.find((option) => option.value === report)?.label ?? "Report"}
+                disabled={!data.length}
+              />
             )}
             <Button startIcon={<DownloadIcon />} variant="contained" disabled={!data.length} onClick={exportCsv}>Export CSV</Button>
           </Stack>
@@ -124,7 +125,7 @@ export function ReportsPage() {
         </Stack>
       </Paper>
 
-      <Paper variant="outlined">
+      <Paper id="report-table-print" variant="outlined">
         {isLoading ? <LoadingState label="Loading report" /> : data.length === 0 ? <EmptyState label="No rows for this report." /> : (
           <Table size="small">
             <TableHead><TableRow>{columns.map((column) => <TableCell key={column}>{label(column)}</TableCell>)}</TableRow></TableHead>

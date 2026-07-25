@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MoneyText } from "../../components/MoneyText";
 import { PageHeader } from "../../components/PageHeader";
 import { EmptyState, LoadingState } from "../../components/feedback/PageState";
+import { PrintButton } from "../../components/print/PrintButton";
 import { reportApi, seedApi } from "../../lib/api";
 import { quantity } from "../../lib/formatters";
 
@@ -53,7 +54,11 @@ export function DashboardPage() {
 
   return (
     <Stack spacing={3}>
-      <PageHeader title="Dashboard" description="Daily sales, profit, debts, and stock alerts." />
+      <PageHeader
+        title="Dashboard"
+        description="Daily sales, profit, debts, and stock alerts."
+        actions={<PrintButton targetId="dashboard-print" title="Inventory Dashboard" />}
+      />
       <Alert
         severity="info"
         action={
@@ -71,22 +76,23 @@ export function DashboardPage() {
         Populate demo rows across products, parties, purchases, sales, expenses, payments, reports, and backup logs.
       </Alert>
 
-      <Grid container spacing={2}>
-        {cards.map(([key, label]) => (
-          <Grid key={key} size={{ xs: 12, sm: 6, md: 3 }}>
-            <Card variant="outlined">
-              <CardContent>
-                <Typography variant="body2" color="text.secondary">
-                  {label}
-                </Typography>
-                <Typography variant="h5" sx={{ mt: 1, fontVariantNumeric: "tabular-nums" }}>
-                  {key === "low_stock_count" ? data.low_stock_count : <MoneyText value={data[key]} />}
-                </Typography>
-              </CardContent>
-            </Card>
-          </Grid>
-        ))}
-      </Grid>
+      <Stack id="dashboard-print" spacing={2}>
+        <Grid container spacing={2}>
+          {cards.map(([key, label]) => (
+            <Grid key={key} size={{ xs: 12, sm: 6, md: 3 }}>
+              <Card variant="outlined">
+                <CardContent>
+                  <Typography variant="body2" color="text.secondary">
+                    {label}
+                  </Typography>
+                  <Typography variant="h5" sx={{ mt: 1, fontVariantNumeric: "tabular-nums" }}>
+                    {key === "low_stock_count" ? data.low_stock_count : <MoneyText value={data[key]} />}
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+          ))}
+        </Grid>
 
       <Grid container spacing={2}>
         <Grid size={{ xs: 12, md: 6 }}>
@@ -111,37 +117,38 @@ export function DashboardPage() {
         </Grid>
       </Grid>
 
-      <Card variant="outlined">
-        <CardContent>
-          <Typography variant="h6" sx={{ mb: 1.5 }}>
-            Low-stock products
-          </Typography>
-          {data.low_stock_products.length === 0 ? (
-            <EmptyState label="No products are currently at or below minimum stock." />
-          ) : (
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell>SKU</TableCell>
-                  <TableCell>Product</TableCell>
-                  <TableCell align="right">Current</TableCell>
-                  <TableCell align="right">Minimum</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {data.low_stock_products.map((product) => (
-                  <TableRow key={product.id}>
-                    <TableCell>{product.sku}</TableCell>
-                    <TableCell>{product.name}</TableCell>
-                    <TableCell align="right">{quantity(product.current_quantity)}</TableCell>
-                    <TableCell align="right">{quantity(product.minimum_quantity)}</TableCell>
+        <Card variant="outlined">
+          <CardContent>
+            <Typography variant="h6" sx={{ mb: 1.5 }}>
+              Low-stock products
+            </Typography>
+            {data.low_stock_products.length === 0 ? (
+              <EmptyState label="No products are currently at or below minimum stock." />
+            ) : (
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>SKU</TableCell>
+                    <TableCell>Product</TableCell>
+                    <TableCell align="right">Current</TableCell>
+                    <TableCell align="right">Minimum</TableCell>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+                </TableHead>
+                <TableBody>
+                  {data.low_stock_products.map((product) => (
+                    <TableRow key={product.id}>
+                      <TableCell>{product.sku}</TableCell>
+                      <TableCell>{product.name}</TableCell>
+                      <TableCell align="right">{quantity(product.current_quantity)}</TableCell>
+                      <TableCell align="right">{quantity(product.minimum_quantity)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      </Stack>
       <Snackbar open={Boolean(toast)} autoHideDuration={5000} onClose={() => setToast(null)} message={toast} />
     </Stack>
   );

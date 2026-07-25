@@ -1,4 +1,5 @@
 import {
+  Alert,
   Button,
   Dialog,
   DialogActions,
@@ -12,6 +13,8 @@ type ConfirmDialogProps = {
   title: string;
   message: string;
   confirmLabel?: string;
+  error?: string | null;
+  loading?: boolean;
   onConfirm: () => void;
   onClose: () => void;
 };
@@ -21,6 +24,8 @@ export function ConfirmDialog({
   title,
   message,
   confirmLabel = "Confirm",
+  error,
+  loading = false,
   onConfirm,
   onClose
 }: ConfirmDialogProps) {
@@ -29,10 +34,11 @@ export function ConfirmDialog({
       <DialogTitle>{title}</DialogTitle>
       <DialogContent>
         <DialogContentText>{message}</DialogContentText>
+        {error ? <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert> : null}
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>
-        <Button color="error" variant="contained" onClick={onConfirm}>
+        <Button color="error" variant="contained" disabled={loading} onClick={onConfirm}>
           {confirmLabel}
         </Button>
       </DialogActions>

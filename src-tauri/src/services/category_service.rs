@@ -89,6 +89,28 @@ pub fn archive_category(conn: &Connection, user_id: i64, id: i64) -> Result<(), 
     Ok(())
 }
 
+pub fn delete_category(conn: &Connection, user_id: i64, id: i64) -> Result<(), AppError> {
+    ensure_category_exists(conn, id)?;
+    let child_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM categories WHERE parent_id = ?1",
+        [id],
+        |row| row.get(0),
+    )?;
+    let product_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM products WHERE category_id = ?1",
+        [id],
+        |row| row.get(0),
+    )?;
+    if child_count > 0 || product_count > 0 {
+        return Err(AppError::validation(
+            "This category is in use. Move its products and child categories first, or archive it instead.",
+        ));
+    }
+    conn.execute("DELETE FROM categories WHERE id = ?1", [id])?;
+    insert_audit_log(conn, user_id, "delete", "categories", id, None, None)?;
+    Ok(())
+}
+
 pub fn get_category(conn: &Connection, id: i64) -> Result<Category, AppError> {
     conn.query_row(
         "SELECT id, name, parent_id, description, is_active, created_at, updated_at

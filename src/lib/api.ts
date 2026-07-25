@@ -32,7 +32,8 @@ export const categoryApi = {
     call<Category>("create_category", { payload }),
   update: (id: number, payload: { name: string; parent_id?: number | null; description?: string | null }) =>
     call<Category>("update_category", { id, payload }),
-  archive: (id: number) => call<void>("archive_category", { id })
+  archive: (id: number) => call<void>("archive_category", { id }),
+  delete: (id: number) => call<void>("delete_category", { id })
 };
 
 export const productApi = {
@@ -41,6 +42,7 @@ export const productApi = {
   create: (payload: ProductPayload) => call<Product>("create_product", { payload }),
   update: (id: number, payload: ProductPayload) => call<Product>("update_product", { id, payload }),
   archive: (id: number) => call<void>("archive_product", { id }),
+  delete: (id: number) => call<void>("delete_product", { id }),
   movement: (product_id: number, filters: DateRangeFilters = {}) =>
     call<InventoryTransaction[]>("get_product_movement", { product_id, filters }),
   adjustStock: (payload: {
@@ -68,6 +70,7 @@ function partyApi(kind: "supplier" | "customer") {
     create: (payload: PartyPayload) => call<Party>(`create_${kind}`, { payload }),
     update: (id: number, payload: PartyPayload) => call<Party>(`update_${kind}`, { id, payload }),
     archive: (id: number) => call<void>(`archive_${kind}`, { id }),
+    delete: (id: number) => call<void>(`delete_${kind}`, { id }),
     statement: (partyId: number, filters: DateRangeFilters = {}) =>
       call<StatementRow[]>(`get_${kind}_statement`, { [`${kind}_id`]: partyId, filters })
   };

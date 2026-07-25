@@ -24,6 +24,7 @@ import { MoneyText } from "../../components/MoneyText";
 import { PageHeader } from "../../components/PageHeader";
 import { ConfirmDialog } from "../../components/feedback/ConfirmDialog";
 import { EmptyState, LoadingState } from "../../components/feedback/PageState";
+import { PrintButton } from "../../components/print/PrintButton";
 import { customerApi, paymentApi, supplierApi } from "../../lib/api";
 import { paymentMethods } from "../../lib/constants";
 import { toCents, today } from "../../lib/formatters";
@@ -85,12 +86,17 @@ export function PaymentsPage() {
 
   return (
     <Stack spacing={2}>
-      <PageHeader title="Payments" description="Record customer money-in and supplier money-out payments." actions={<Button startIcon={<AddIcon />} variant="contained" onClick={() => setForm(blankForm)}>Add payment</Button>} />
-      <Paper variant="outlined">
+      <PageHeader title="Payments" description="Record customer money-in and supplier money-out payments." actions={
+        <Stack direction="row" spacing={1}>
+          <PrintButton targetId="payments-print" title="Payments" subtitle={`${payments.length} records`} disabled={!payments.length} />
+          <Button startIcon={<AddIcon />} variant="contained" onClick={() => setForm(blankForm)}>Add payment</Button>
+        </Stack>
+      } />
+      <Paper id="payments-print" variant="outlined">
         {payments.length === 0 ? <EmptyState label="No payments recorded." /> : (
           <Table size="small">
-            <TableHead><TableRow><TableCell>Date</TableCell><TableCell>Party</TableCell><TableCell>Direction</TableCell><TableCell>Method</TableCell><TableCell align="right">Amount</TableCell><TableCell>Reference</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead>
-            <TableBody>{payments.map((payment) => <TableRow key={payment.id} hover><TableCell>{payment.payment_date}</TableCell><TableCell>{payment.party_name}</TableCell><TableCell>{payment.payment_direction}</TableCell><TableCell>{payment.payment_method}</TableCell><TableCell align="right"><MoneyText value={payment.amount_cents} currency={payment.currency} /></TableCell><TableCell>{payment.reference_type ? `${payment.reference_type} #${payment.reference_id}` : "General"}</TableCell><TableCell align="right"><Button size="small" color="error" startIcon={<DeleteIcon />} onClick={() => setDeleteId(payment.id)}>Delete</Button></TableCell></TableRow>)}</TableBody>
+            <TableHead><TableRow><TableCell>Date</TableCell><TableCell>Party</TableCell><TableCell>Direction</TableCell><TableCell>Method</TableCell><TableCell align="right">Amount</TableCell><TableCell>Reference</TableCell><TableCell className="print-exclude" align="right">Actions</TableCell></TableRow></TableHead>
+            <TableBody>{payments.map((payment) => <TableRow key={payment.id} hover><TableCell>{payment.payment_date}</TableCell><TableCell>{payment.party_name}</TableCell><TableCell>{payment.payment_direction}</TableCell><TableCell>{payment.payment_method}</TableCell><TableCell align="right"><MoneyText value={payment.amount_cents} currency={payment.currency} /></TableCell><TableCell>{payment.reference_type ? `${payment.reference_type} #${payment.reference_id}` : "General"}</TableCell><TableCell className="print-exclude" align="right"><Button size="small" color="error" startIcon={<DeleteIcon />} onClick={() => setDeleteId(payment.id)}>Delete</Button></TableCell></TableRow>)}</TableBody>
           </Table>
         )}
       </Paper>
