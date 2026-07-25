@@ -1,6 +1,7 @@
 import { Box, Button, Stack, Typography } from "@mui/material";
 import LogoutIcon from "@mui/icons-material/Logout";
 
+import { AppUpdater } from "../../components/updater/AppUpdater";
 import { useAuth } from "../../features/auth/AuthContext";
 
 export function Topbar() {
@@ -23,6 +24,7 @@ export function Topbar() {
         Local database, single admin
       </Typography>
       <Stack direction="row" spacing={1.5} alignItems="center">
+        <AppUpdater />
         <Typography variant="body2">{admin?.full_name}</Typography>
         <Button size="small" startIcon={<LogoutIcon />} onClick={() => void logout()}>
           Logout

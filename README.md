@@ -1,6 +1,6 @@
 # Steel Inventory Desktop System
 
-Offline-first Windows desktop application for steel inventory, supplier purchases, sales invoices, expenses, customer/supplier payments, reports, invoice printing, and local backup/restore.
+Offline-first macOS desktop application for steel inventory, supplier purchases, sales invoices, expenses, customer/supplier payments, reports, invoice printing, local backup/restore, and in-app updates.
 
 ## Tech Stack
 
@@ -13,7 +13,7 @@ Offline-first Windows desktop application for steel inventory, supplier purchase
 
 ## Run in Development
 
-```powershell
+```bash
 npm install
 npm run tauri:dev
 ```
@@ -24,19 +24,18 @@ After login, open the Dashboard and click `Seed demo data` to populate realistic
 
 ## Build
 
-```powershell
+```bash
 npm run tauri:build
 ```
 
 Build outputs:
 
-- `src-tauri/target/release/steel_inventory.exe`
-- `src-tauri/target/release/bundle/msi/Steel Inventory_0.1.0_x64_en-US.msi`
-- `src-tauri/target/release/bundle/nsis/Steel Inventory_0.1.0_x64-setup.exe`
+- `src-tauri/target/release/bundle/macos/Steel Inventory.app`
+- `src-tauri/target/release/bundle/dmg/Steel Inventory_<version>_<architecture>.dmg`
 
 ## Verification
 
-```powershell
+```bash
 npm run build
 cd src-tauri
 cargo check
@@ -67,3 +66,33 @@ payables based on actual completed sales, and printed as a physical stock count 
 [SUPPLIER_FEATURES_AUDIT.md](SUPPLIER_FEATURES_AUDIT.md) for the implementation audit
 (what existed, what was missing, what changed). Database changes live in migration
 `src-tauri/src/db/migrations/003_supplier_product_variants.sql`.
+
+## macOS Releases and Automatic Updates
+
+The GitHub Actions workflow publishes one universal macOS build that runs on Apple Silicon and Intel Macs. It intentionally does not build or publish Windows assets.
+
+The updater private key is stored locally at `~/.tauri/steel-inventory.key`. Keep an encrypted backup outside this repository. Never commit or share it. Its public key is embedded in `src-tauri/tauri.conf.json`.
+
+Configure the required GitHub repository secret once:
+
+```bash
+gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/steel-inventory.key
+```
+
+To publish version `1.0.5`, make sure `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` all contain `1.0.5`, then commit and push the code:
+
+```bash
+git add .github/workflows/release-desktop.yml README.md package.json package-lock.json \
+  src src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/capabilities \
+  src-tauri/gen/schemas src-tauri/src src-tauri/tauri.conf.json
+git commit -m "release: v1.0.5"
+git push origin master
+git tag v1.0.5
+git push origin v1.0.5
+```
+
+Pushing the tag runs `.github/workflows/release-desktop.yml`. The workflow creates a public GitHub Release containing the universal DMG, signed updater archive, signature, and `latest.json`.
+
+Builds are ad-hoc signed because no Apple Developer identity is currently configured. Users may need to approve the first installation in macOS Privacy & Security. For frictionless public distribution, configure a paid Apple Developer ID certificate and notarization credentials.
+
+The first updater-enabled version must be downloaded and installed once. Every later version is detected on app startup and can be installed with **Install and restart**, without downloading the repository or another DMG manually.

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Steel Inventory",
-  "version": "0.1.0",
+  "version": "1.0.5",
   "identifier": "com.local.steel-inventory",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -28,6 +28,15 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": ["icons/icon.png", "icons/icon.ico", "icons/icon.icns"]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY2QzcyMUQ1MDA3OUIyOEQKUldTTnNua0ExU0hIOXRCdjI4K0dDM1JoNEFXZjlQVmhEYTdIMDJnYzRNUC9scEQwdnR0TklzSjAK",
+      "endpoints": [
+        "https://github.com/baderkothman/steel-inventory/releases/latest/download/latest.json"
+      ]
+    }
   }
 }
