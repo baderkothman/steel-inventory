@@ -96,4 +96,6 @@ Use `RELEASE_NOTES_v1.0.6.md` as the GitHub Release description after the workfl
 
 Builds are ad-hoc signed because no Apple Developer identity is currently configured. Users may need to approve the first installation in macOS Privacy & Security. For frictionless public distribution, configure a paid Apple Developer ID certificate and notarization credentials.
 
-The first updater-enabled version must be downloaded and installed once. Every later version is detected on app startup and can be installed with **Install and restart**, without downloading the repository or another DMG manually.
+For the first updater-enabled version, open the downloaded DMG, drag **Steel Inventory** onto **Applications**, eject the DMG, and launch the app from Applications. Do not run the app directly from the DMG: macOS mounts DMGs read-only, so an app running there cannot replace itself during an update.
+
+Every later version is detected on app startup and can be installed with **Install and restart**, without downloading the repository or another DMG manually. The app detects read-only DMG and App Translocation launches before downloading an update and explains how to move the installation. The database remains in the user's app-data directory when the application bundle is moved.

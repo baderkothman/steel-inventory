@@ -94,7 +94,7 @@ jobs:
         with:
           tagName: ${{ env.RELEASE_TAG }}
           releaseName: "Steel Inventory ${{ env.RELEASE_TAG }}"
-          releaseBody: "Download the DMG for the first installation. Existing updater-enabled installations can install this release from inside the app."
+          releaseBody: "For the first installation, open the DMG and drag Steel Inventory into Applications before launching it. Do not run the app from the DMG. Existing updater-enabled installations can install this release from inside the app."
           releaseDraft: false
           prerelease: false
           uploadUpdaterJson: true

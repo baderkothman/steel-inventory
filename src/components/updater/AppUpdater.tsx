@@ -15,15 +15,20 @@ import {
 } from "@mui/material";
 import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
 import { isTauri } from "@tauri-apps/api/core";
+import { resourceDir } from "@tauri-apps/api/path";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 
 let startupCheckStarted = false;
 
+const READ_ONLY_INSTALL_INSTRUCTIONS =
+  "Steel Inventory is running from a read-only disk image. Quit the app, drag Steel Inventory into Applications, eject the disk image, then reopen it from Applications and install the update. Your data will stay in place.";
+
 export function AppUpdater() {
   const [update, setUpdate] = useState<Update | null>(null);
   const [checking, setChecking] = useState(false);
   const [installing, setInstalling] = useState(false);
+  const [readOnlyInstall, setReadOnlyInstall] = useState(false);
   const [downloaded, setDownloaded] = useState(0);
   const [downloadSize, setDownloadSize] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -46,6 +51,7 @@ export function AppUpdater() {
     try {
       const availableUpdate = await check({ timeout: 30_000 });
       if (availableUpdate) {
+        setReadOnlyInstall(await isReadOnlyMacInstall());
         setUpdate(availableUpdate);
       } else if (showCurrentMessage) {
         setMessage("Steel Inventory is up to date.");
@@ -77,7 +83,12 @@ export function AppUpdater() {
       setMessage(`Version ${update.version} installed. Restarting…`);
       await relaunch();
     } catch (reason) {
-      setError(toMessage(reason));
+      if (isReadOnlyFileSystemError(reason)) {
+        setReadOnlyInstall(true);
+        setError(null);
+      } else {
+        setError(toMessage(reason));
+      }
       setInstalling(false);
     }
   }
@@ -86,6 +97,7 @@ export function AppUpdater() {
     if (installing) return;
     const current = update;
     setUpdate(null);
+    setReadOnlyInstall(false);
     if (current) {
       await current.close().catch(() => undefined);
     }
@@ -105,12 +117,15 @@ export function AppUpdater() {
       </Button>
 
       <Dialog open={Boolean(update)} onClose={() => void dismissUpdate()} maxWidth="sm" fullWidth>
-        <DialogTitle>Update available</DialogTitle>
+        <DialogTitle>{readOnlyInstall ? "Move Steel Inventory to Applications" : "Update available"}</DialogTitle>
         <DialogContent>
           <Stack spacing={2}>
             <DialogContentText>
-              Steel Inventory {update?.version} is ready to install. The app will restart after the update.
+              {readOnlyInstall
+                ? `Steel Inventory ${update?.version} is available, but it cannot be installed from the current location.`
+                : `Steel Inventory ${update?.version} is ready to install. The app will restart after the update.`}
             </DialogContentText>
+            {readOnlyInstall ? <Alert severity="warning">{READ_ONLY_INSTALL_INSTRUCTIONS}</Alert> : null}
             {update?.body ? (
               <Box>
                 <Typography variant="subtitle2" gutterBottom>Release notes</Typography>
@@ -131,15 +146,21 @@ export function AppUpdater() {
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button disabled={installing} onClick={() => void dismissUpdate()}>Later</Button>
-          <Button
-            startIcon={<SystemUpdateAltIcon />}
-            variant="contained"
-            disabled={installing}
-            onClick={() => void installUpdate()}
-          >
-            {installing ? "Installing…" : "Install and restart"}
-          </Button>
+          {readOnlyInstall ? (
+            <Button variant="contained" onClick={() => void dismissUpdate()}>Got it</Button>
+          ) : (
+            <>
+              <Button disabled={installing} onClick={() => void dismissUpdate()}>Later</Button>
+              <Button
+                startIcon={<SystemUpdateAltIcon />}
+                variant="contained"
+                disabled={installing}
+                onClick={() => void installUpdate()}
+              >
+                {installing ? "Installing…" : "Install and restart"}
+              </Button>
+            </>
+          )}
         </DialogActions>
       </Dialog>
 
@@ -160,4 +181,22 @@ function toMessage(reason: unknown) {
   if (reason instanceof Error) return reason.message;
   if (typeof reason === "string") return reason;
   return "Could not check for updates. Please try again.";
+}
+
+async function isReadOnlyMacInstall() {
+  try {
+    return isReadOnlyMacAppPath(await resourceDir());
+  } catch {
+    return false;
+  }
+}
+
+function isReadOnlyMacAppPath(path: string) {
+  const normalizedPath = path.replace(/\\/g, "/");
+  return normalizedPath.startsWith("/Volumes/") || normalizedPath.includes("/AppTranslocation/");
+}
+
+function isReadOnlyFileSystemError(reason: unknown) {
+  const message = toMessage(reason).toLowerCase();
+  return message.includes("read-only file system") || message.includes("os error 30") || message.includes("erofs");
 }

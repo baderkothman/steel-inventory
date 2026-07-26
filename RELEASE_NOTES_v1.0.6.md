@@ -35,6 +35,6 @@ On first launch, database migration `004_accounting_integrity` removes legacy in
 
 ## macOS installation
 
-Download the DMG for a first installation. Existing updater-enabled installations can install this release from inside the app.
+For a first installation, open the DMG and drag **Steel Inventory** into **Applications** before launching it. Do not run the app directly from the DMG because macOS mounts it read-only. Existing updater-enabled installations in Applications can install this release from inside the app.
 
 The macOS build is ad-hoc signed. On first installation, macOS may require approval in **System Settings → Privacy & Security**.
