@@ -20,6 +20,7 @@ import { PageHeader } from "../../components/PageHeader";
 import { LoadingState } from "../../components/feedback/PageState";
 import { useAuth } from "../auth/AuthContext";
 import { settingsApi } from "../../lib/api";
+import { isCurrencyCode } from "../../lib/formatters";
 import { normalizeError } from "../../lib/tauri";
 import type { CompanySettings } from "../../types/common";
 
@@ -81,7 +82,12 @@ export function SettingsPage() {
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (form && window.confirm("Save settings changes?")) mutation.mutate(form);
+    if (!form) return;
+    if (!isCurrencyCode(form.default_currency)) {
+      setError("Default currency must be a three-letter code such as USD, SAR, AED, or EUR.");
+      return;
+    }
+    if (window.confirm("Save settings changes?")) mutation.mutate(form);
   }
 
   if (isLoading || !form) return <LoadingState label="Loading settings" />;
@@ -97,7 +103,14 @@ export function SettingsPage() {
           <TextField label="Email" value={form.email ?? ""} onChange={(e) => setForm({ ...form, email: e.target.value })} />
           <TextField label="Address" multiline minRows={2} value={form.address ?? ""} onChange={(e) => setForm({ ...form, address: e.target.value })} />
           <TextField label="Tax number" value={form.tax_number ?? ""} onChange={(e) => setForm({ ...form, tax_number: e.target.value })} />
-          <TextField label="Default currency" value={form.default_currency} onChange={(e) => setForm({ ...form, default_currency: e.target.value.toUpperCase() })} />
+          <TextField
+            label="Default currency"
+            value={form.default_currency}
+            error={!isCurrencyCode(form.default_currency)}
+            helperText="Use a three-letter currency code, for example SAR or USD."
+            slotProps={{ htmlInput: { maxLength: 3 } }}
+            onChange={(e) => setForm({ ...form, default_currency: e.target.value.toUpperCase() })}
+          />
           <TextField label="Sales invoice prefix" value={form.invoice_prefix_sales} onChange={(e) => setForm({ ...form, invoice_prefix_sales: e.target.value.toUpperCase() })} />
           <TextField label="Purchase invoice prefix" value={form.invoice_prefix_purchase} onChange={(e) => setForm({ ...form, invoice_prefix_purchase: e.target.value.toUpperCase() })} />
           <TextField label="Default tax value" type="number" value={form.default_tax_rate} onChange={(e) => setForm({ ...form, default_tax_rate: Number(e.target.value) })} />

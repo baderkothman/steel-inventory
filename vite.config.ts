@@ -10,7 +10,9 @@ export default defineConfig({
   },
   envPrefix: ["VITE_", "TAURI_"],
   build: {
-    target: "es2020",
+    // Tauri uses the macOS system WebView. Target Safari 13 so the same bundle
+    // remains usable on older supported MacBooks instead of failing to parse.
+    target: "safari13",
     minify: "esbuild",
     sourcemap: false,
     rollupOptions: {

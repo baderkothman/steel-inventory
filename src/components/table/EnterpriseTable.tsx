@@ -1,8 +1,10 @@
 import { ReactNode, useMemo, useState } from "react";
 import {
+  Alert,
   Box,
   Button,
   Checkbox,
+  CircularProgress,
   Divider,
   IconButton,
   ListItemIcon,
@@ -11,6 +13,7 @@ import {
   MenuItem,
   Paper,
   Skeleton,
+  Snackbar,
   Stack,
   Table,
   TableBody,
@@ -116,6 +119,11 @@ export function EnterpriseTable<T>({
   );
   const [columnsAnchor, setColumnsAnchor] = useState<HTMLElement | null>(null);
   const [exportAnchor, setExportAnchor] = useState<HTMLElement | null>(null);
+  const [exporting, setExporting] = useState<"CSV" | "Excel" | "PDF" | null>(null);
+  const [exportNotice, setExportNotice] = useState<{
+    message: string;
+    severity: "success" | "error";
+  } | null>(null);
   const [printHtml, setPrintHtml] = useState("");
 
   const visibleColumns = useMemo(
@@ -188,6 +196,33 @@ export function EnterpriseTable<T>({
     setSelected(next);
   }
 
+  async function handleExport(format: "CSV" | "Excel" | "PDF") {
+    setExportAnchor(null);
+    setExporting(format);
+    setExportNotice(null);
+
+    try {
+      const data = exportData();
+      if (format === "CSV") exportCsv(data);
+      else if (format === "Excel") exportXlsx(data);
+      else await exportPdf(data);
+
+      setExportNotice({
+        severity: "success",
+        message: `${format} export is ready. The download has started.`
+      });
+    } catch (error) {
+      setExportNotice({
+        severity: "error",
+        message: error instanceof Error
+          ? `Could not export ${format}: ${error.message}`
+          : `Could not export ${format}. Please try again.`
+      });
+    } finally {
+      setExporting(null);
+    }
+  }
+
   return (
     <Paper
       variant="outlined"
@@ -240,11 +275,11 @@ export function EnterpriseTable<T>({
           </Tooltip>
           <Button
             size="small"
-            startIcon={<DownloadOutlinedIcon />}
-            disabled={!exportRows.length}
+            startIcon={exporting ? <CircularProgress size={16} /> : <DownloadOutlinedIcon />}
+            disabled={!exportRows.length || Boolean(exporting)}
             onClick={(event) => setExportAnchor(event.currentTarget)}
           >
-            Export
+            {exporting ? `Exporting ${exporting}…` : "Export"}
           </Button>
           <Button
             size="small"
@@ -430,11 +465,26 @@ export function EnterpriseTable<T>({
         ))}
       </Menu>
       <Menu anchorEl={exportAnchor} open={Boolean(exportAnchor)} onClose={() => setExportAnchor(null)}>
-        <MenuItem onClick={() => { exportCsv(exportData()); setExportAnchor(null); }}>CSV</MenuItem>
-        <MenuItem onClick={() => { exportXlsx(exportData()); setExportAnchor(null); }}>Excel (.xlsx)</MenuItem>
-        <MenuItem onClick={() => { void exportPdf(exportData()); setExportAnchor(null); }}>PDF</MenuItem>
+        <MenuItem onClick={() => void handleExport("CSV")}>CSV</MenuItem>
+        <MenuItem onClick={() => void handleExport("Excel")}>Excel (.xlsx)</MenuItem>
+        <MenuItem onClick={() => void handleExport("PDF")}>PDF</MenuItem>
       </Menu>
       <PrintDialog open={Boolean(printHtml)} html={printHtml} onClose={() => setPrintHtml("")} />
+      <Snackbar
+        open={Boolean(exportNotice)}
+        autoHideDuration={5000}
+        onClose={() => setExportNotice(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert
+          severity={exportNotice?.severity ?? "success"}
+          variant="filled"
+          onClose={() => setExportNotice(null)}
+          sx={{ width: "100%" }}
+        >
+          {exportNotice?.message}
+        </Alert>
+      </Snackbar>
     </Paper>
   );
 }

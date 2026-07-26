@@ -11,6 +11,8 @@ export function Topbar() {
     <Box
       sx={{
         height: 64,
+        minHeight: 64,
+        flexShrink: 0,
         px: 3,
         display: "flex",
         alignItems: "center",

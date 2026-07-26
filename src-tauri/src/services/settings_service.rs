@@ -28,6 +28,12 @@ pub fn update_company_settings(
     required(&payload.default_currency, "Default currency")?;
     required(&payload.invoice_prefix_sales, "Sales invoice prefix")?;
     required(&payload.invoice_prefix_purchase, "Purchase invoice prefix")?;
+    let currency = payload.default_currency.trim();
+    if currency.len() != 3 || !currency.chars().all(|character| character.is_ascii_alphabetic()) {
+        return Err(AppError::validation(
+            "Default currency must be a three-letter code such as USD, SAR, AED, or EUR.",
+        ));
+    }
     if payload.default_tax_rate < 0.0 {
         return Err(AppError::validation(
             "Default tax value must be zero or greater.",
@@ -53,7 +59,7 @@ pub fn update_company_settings(
             payload.email,
             payload.address,
             payload.tax_number,
-            payload.default_currency.trim().to_uppercase(),
+            currency.to_uppercase(),
             payload.invoice_prefix_sales.trim().to_uppercase(),
             payload.invoice_prefix_purchase.trim().to_uppercase(),
             if payload.allow_negative_stock { 1 } else { 0 },

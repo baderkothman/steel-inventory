@@ -2,7 +2,6 @@ import { useState } from "react";
 import { NavLink } from "react-router-dom";
 import {
   Box,
-  Divider,
   IconButton,
   List,
   ListItemButton,
@@ -79,7 +78,19 @@ export function Sidebar() {
         transition: "width 200ms cubic-bezier(0.22, 1, 0.36, 1), flex-basis 200ms cubic-bezier(0.22, 1, 0.36, 1)"
       }}
     >
-      <Box sx={{ height: 76, px: collapsed ? 1.25 : 2.5, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
+      <Box
+        sx={{
+          height: 64,
+          minHeight: 64,
+          px: collapsed ? 1.25 : 2.5,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 1,
+          borderBottom: "1px solid",
+          borderColor: "divider"
+        }}
+      >
         {collapsed ? (
           <Typography aria-label="Steel Inventory" variant="h6" color="primary.main" sx={{ width: 40, textAlign: "center" }}>
             SI
@@ -100,7 +111,6 @@ export function Sidebar() {
           </Tooltip>
         ) : null}
       </Box>
-      <Divider />
       <List sx={{ px: collapsed ? 1 : 1.25, py: 1.5, flex: 1, overflowY: "auto", overflowX: "hidden" }}>
         {items.map((item) => (
           <Tooltip key={item.to} title={collapsed ? item.label : ""} placement="right" arrow>

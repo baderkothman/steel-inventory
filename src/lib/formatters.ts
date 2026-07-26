@@ -1,10 +1,24 @@
 export function money(cents?: number | null, currency = "USD") {
   const value = (cents ?? 0) / 100;
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency,
-    maximumFractionDigits: 2
-  }).format(value);
+  const code = currency.trim().toUpperCase();
+
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: code || "USD",
+      maximumFractionDigits: 2
+    }).format(value);
+  } catch {
+    const formatted = new Intl.NumberFormat(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(value);
+    return code ? `${formatted} ${code}` : formatted;
+  }
+}
+
+export function isCurrencyCode(value: string) {
+  return /^[A-Za-z]{3}$/.test(value.trim());
 }
 
 export function toCents(value: string | number) {
