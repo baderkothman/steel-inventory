@@ -29,7 +29,11 @@ pub fn update_company_settings(
     required(&payload.invoice_prefix_sales, "Sales invoice prefix")?;
     required(&payload.invoice_prefix_purchase, "Purchase invoice prefix")?;
     let currency = payload.default_currency.trim();
-    if currency.len() != 3 || !currency.chars().all(|character| character.is_ascii_alphabetic()) {
+    if currency.len() != 3
+        || !currency
+            .chars()
+            .all(|character| character.is_ascii_alphabetic())
+    {
         return Err(AppError::validation(
             "Default currency must be a three-letter code such as USD, SAR, AED, or EUR.",
         ));
