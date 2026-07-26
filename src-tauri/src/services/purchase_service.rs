@@ -6,7 +6,7 @@ use crate::{
         PurchaseInvoicePayload,
     },
     services::{
-        inventory_service::{insert_inventory_transaction, update_stock},
+        inventory_service::{insert_inventory_transaction, recalculate_stock, update_stock},
         settings_service::get_company_settings,
     },
     utils::{
@@ -96,7 +96,14 @@ pub fn create_purchase_invoice(
             Some(format!("Purchase invoice {invoice_number}")),
             user_id,
         )?;
-        update_latest_cost_price(&tx, item.product_id, item.unit_cost_cents, &settings.default_currency, &now)?;
+        update_latest_cost_price(
+            &tx,
+            item.product_id,
+            item.unit_cost_cents,
+            &settings.default_currency,
+            &now,
+            invoice_id,
+        )?;
     }
 
     if payload.paid_cents > 0 {
@@ -140,24 +147,23 @@ pub fn cancel_purchase_invoice(conn: &Connection, user_id: i64, id: i64) -> Resu
     if invoice.invoice.status == "cancelled" {
         return Ok(());
     }
-    let settings = get_company_settings(conn)?;
     let now = now_iso();
     let tx = conn.unchecked_transaction()?;
-    for item in invoice.items {
-        update_stock(&tx, item.product_id, -item.quantity, settings.allow_negative_stock)?;
-        insert_inventory_transaction(
-            &tx,
-            item.product_id,
-            "supplier_return",
-            "purchase_invoice",
-            Some(id),
-            0.0,
-            item.quantity,
-            Some(item.unit_cost_cents),
-            Some(format!("Cancelled purchase invoice {}", invoice.invoice.invoice_number)),
-            user_id,
-        )?;
+    tx.execute(
+        "UPDATE inventory_transactions
+         SET status = 'cancelled'
+         WHERE reference_type = 'purchase_invoice' AND reference_id = ?1",
+        [id],
+    )?;
+    for item in &invoice.items {
+        recalculate_stock(&tx, item.product_id)?;
     }
+    tx.execute(
+        "UPDATE product_prices
+         SET status = 'cancelled'
+         WHERE reference_type = 'purchase_invoice' AND reference_id = ?1",
+        [id],
+    )?;
     tx.execute(
         "UPDATE purchase_invoices
          SET status = 'cancelled', payment_status = 'unpaid', paid_cents = 0,
@@ -166,7 +172,9 @@ pub fn cancel_purchase_invoice(conn: &Connection, user_id: i64, id: i64) -> Resu
         params![now, id],
     )?;
     tx.execute(
-        "DELETE FROM payments WHERE reference_type = 'purchase_invoice' AND reference_id = ?1",
+        "UPDATE payments
+         SET status = 'cancelled'
+         WHERE reference_type = 'purchase_invoice' AND reference_id = ?1",
         [id],
     )?;
     insert_audit_log(&tx, user_id, "cancel", "purchase_invoices", id, None, None)?;
@@ -189,11 +197,18 @@ pub fn list_purchase_invoices(
            AND (?2 IS NULL OR date(pi.invoice_date) <= date(?2))
            AND (?3 IS NULL OR pi.supplier_id = ?3)
            AND (?4 IS NULL OR pi.payment_status = ?4)
+           AND (?5 = 0 OR pi.status = 'active')
          ORDER BY pi.invoice_date DESC, pi.id DESC",
     )?;
     let rows = stmt
         .query_map(
-            params![filters.date_from, filters.date_to, filters.party_id, filters.payment_status],
+            params![
+                filters.date_from,
+                filters.date_to,
+                filters.party_id,
+                filters.payment_status,
+                if filters.active_only.unwrap_or(false) { 1 } else { 0 }
+            ],
             map_invoice_row,
         )?
         .collect::<Result<Vec<_>, _>>()?;
@@ -314,12 +329,13 @@ fn update_latest_cost_price(
     unit_cost_cents: i64,
     currency: &str,
     now: &str,
+    purchase_invoice_id: i64,
 ) -> Result<(), AppError> {
     let latest: Option<(i64, i64)> = conn
         .query_row(
             "SELECT selling_price_cents, wholesale_price_cents
              FROM product_prices
-             WHERE product_id = ?1
+             WHERE product_id = ?1 AND status = 'active'
              ORDER BY effective_from DESC, id DESC
              LIMIT 1",
             [product_id],
@@ -329,9 +345,18 @@ fn update_latest_cost_price(
     if let Some((selling, wholesale)) = latest {
         conn.execute(
             "INSERT INTO product_prices
-             (product_id, cost_price_cents, selling_price_cents, wholesale_price_cents, currency, effective_from, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
-            params![product_id, unit_cost_cents, selling, wholesale, currency, now],
+             (product_id, cost_price_cents, selling_price_cents, wholesale_price_cents,
+              currency, effective_from, created_at, reference_type, reference_id, status)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, 'purchase_invoice', ?7, 'active')",
+            params![
+                product_id,
+                unit_cost_cents,
+                selling,
+                wholesale,
+                currency,
+                now,
+                purchase_invoice_id
+            ],
         )?;
     }
     Ok(())

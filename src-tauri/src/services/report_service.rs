@@ -20,6 +20,16 @@ pub fn dashboard_summary(conn: &Connection, date: Option<String>) -> Result<Dash
         "SELECT COALESCE(SUM(total_cents), 0) FROM sales_invoices WHERE sales_status = 'completed' AND date(invoice_date) = date(?1)",
         &[&date],
     )?;
+    let today_sales_count = scalar_i64(
+        conn,
+        "SELECT COUNT(*) FROM sales_invoices WHERE sales_status = 'completed' AND date(invoice_date) = date(?1)",
+        &[&date],
+    )?;
+    let today_purchase_count = scalar_i64(
+        conn,
+        "SELECT COUNT(*) FROM purchase_invoices WHERE status = 'active' AND date(invoice_date) = date(?1)",
+        &[&date],
+    )?;
     let today_paid_cents = scalar_i64(
         conn,
         "SELECT COALESCE(SUM(paid_cents), 0) FROM sales_invoices WHERE sales_status = 'completed' AND date(invoice_date) = date(?1)",
@@ -40,18 +50,25 @@ pub fn dashboard_summary(conn: &Connection, date: Option<String>) -> Result<Dash
     )?;
     let today_expenses_cents = scalar_i64(
         conn,
-        "SELECT COALESCE(SUM(amount_cents), 0) FROM expenses WHERE date(expense_date) = date(?1)",
+        "SELECT COALESCE(SUM(amount_cents), 0) FROM expenses WHERE status = 'active' AND date(expense_date) = date(?1)",
         &[&date],
     )?;
     let total_customer_debts_cents = total_debt(conn, PartyKind::Customer)?;
     let total_supplier_debts_cents = total_debt(conn, PartyKind::Supplier)?;
     let current_stock_value_cents = scalar_i64(
         conn,
-        "SELECT COALESCE(SUM(sl.current_quantity * COALESCE(pp.cost_price_cents, 0)), 0)
-         FROM stock_levels sl
-         JOIN products p ON p.id = sl.product_id
+        "SELECT COALESCE(SUM(
+                    COALESCE((
+                        SELECT SUM(it.quantity_in - it.quantity_out)
+                        FROM inventory_transactions it
+                        WHERE it.product_id = p.id AND it.status = 'active'
+                    ), 0) * COALESCE(pp.cost_price_cents, 0)
+                ), 0)
+         FROM products p
          LEFT JOIN product_prices pp ON pp.id = (
-             SELECT id FROM product_prices WHERE product_id = p.id ORDER BY effective_from DESC, id DESC LIMIT 1
+             SELECT id FROM product_prices
+             WHERE product_id = p.id AND status = 'active'
+             ORDER BY effective_from DESC, id DESC LIMIT 1
          )",
         &[],
     )?;
@@ -68,8 +85,8 @@ pub fn dashboard_summary(conn: &Connection, date: Option<String>) -> Result<Dash
     .into_iter()
     .filter(|product| product.current_quantity <= product.minimum_quantity)
     .collect::<Vec<_>>();
-    low_stock_products.truncate(8);
     let low_stock_count = low_stock_products.len() as i64;
+    low_stock_products.truncate(8);
 
     let recent_sales_invoices = list_sales_invoices(
         conn,
@@ -78,6 +95,7 @@ pub fn dashboard_summary(conn: &Connection, date: Option<String>) -> Result<Dash
             date_to: None,
             party_id: None,
             payment_status: None,
+            active_only: Some(true),
         },
     )?
     .into_iter()
@@ -90,6 +108,7 @@ pub fn dashboard_summary(conn: &Connection, date: Option<String>) -> Result<Dash
             date_to: None,
             party_id: None,
             payment_status: None,
+            active_only: Some(true),
         },
     )?
     .into_iter()
@@ -99,6 +118,8 @@ pub fn dashboard_summary(conn: &Connection, date: Option<String>) -> Result<Dash
     Ok(DashboardSummary {
         date,
         today_sales_cents,
+        today_sales_count,
+        today_purchase_count,
         today_paid_cents,
         today_remaining_cents,
         today_profit_cents,
@@ -122,6 +143,7 @@ pub fn daily_sales_report(conn: &Connection, filters: ReportFilters) -> Result<V
             date_to: filters.date_to,
             party_id: filters.customer_id,
             payment_status: filters.payment_status,
+            active_only: Some(true),
         },
     )?;
     Ok(rows
@@ -149,6 +171,7 @@ pub fn purchase_report(conn: &Connection, filters: ReportFilters) -> Result<Vec<
             date_to: filters.date_to,
             party_id: filters.supplier_id,
             payment_status: filters.payment_status,
+            active_only: Some(true),
         },
     )?;
     Ok(rows
@@ -207,7 +230,9 @@ pub fn monthly_profit_report(conn: &Connection, filters: ReportFilters) -> Resul
                 COALESCE(SUM(sii.total_price_cents), 0),
                 COALESCE(SUM(sii.total_cost_cents), 0),
                 COALESCE(SUM(sii.profit_cents), 0),
-                COALESCE((SELECT SUM(amount_cents) FROM expenses e WHERE substr(e.expense_date, 1, 7) = substr(si.invoice_date, 1, 7)), 0)
+                COALESCE((SELECT SUM(amount_cents) FROM expenses e
+                          WHERE e.status = 'active'
+                            AND substr(e.expense_date, 1, 7) = substr(si.invoice_date, 1, 7)), 0)
          FROM sales_invoice_items sii
          JOIN sales_invoices si ON si.id = sii.sales_invoice_id
          WHERE si.sales_status = 'completed'
@@ -357,7 +382,8 @@ pub fn supplier_settlement_summary(conn: &Connection, filters: ReportFilters) ->
          LEFT JOIN (
              SELECT supplier_id AS sid, SUM(amount_cents) AS paid_cents
              FROM supplier_settlement_payments
-             WHERE (?1 IS NULL OR date(payment_date) >= date(?1))
+             WHERE lifecycle_status = 'active'
+               AND (?1 IS NULL OR date(payment_date) >= date(?1))
                AND (?2 IS NULL OR date(payment_date) <= date(?2))
              GROUP BY supplier_id
          ) paid ON paid.sid = s.id
@@ -464,7 +490,8 @@ pub fn expense_report(conn: &Connection, filters: ReportFilters) -> Result<Vec<V
         "SELECT e.expense_date, ec.name, e.title, e.amount_cents, e.payment_method, e.notes
          FROM expenses e
          JOIN expense_categories ec ON ec.id = e.expense_category_id
-         WHERE (?1 IS NULL OR date(e.expense_date) >= date(?1))
+         WHERE e.status = 'active'
+           AND (?1 IS NULL OR date(e.expense_date) >= date(?1))
            AND (?2 IS NULL OR date(e.expense_date) <= date(?2))
          ORDER BY e.expense_date DESC, e.id DESC",
     )?;
@@ -499,6 +526,7 @@ pub fn payment_report(conn: &Connection, filters: ReportFilters) -> Result<Vec<V
             date_to: filters.date_to,
             party_type,
             party_id,
+            active_only: Some(true),
         },
     )?;
     Ok(rows
@@ -576,6 +604,7 @@ pub fn stock_movement_report(conn: &Connection, filters: ReportFilters) -> Resul
         MovementFilters {
             date_from: filters.date_from,
             date_to: filters.date_to,
+            active_only: Some(true),
         },
     )?;
     Ok(rows
@@ -597,7 +626,11 @@ pub fn stock_movement_report(conn: &Connection, filters: ReportFilters) -> Resul
         .collect())
 }
 
-fn debt_report(conn: &Connection, kind: PartyKind, _filters: ReportFilters) -> Result<Vec<Value>, AppError> {
+fn debt_report(conn: &Connection, kind: PartyKind, filters: ReportFilters) -> Result<Vec<Value>, AppError> {
+    let selected_party_id = match kind {
+        PartyKind::Customer => filters.customer_id,
+        PartyKind::Supplier => filters.supplier_id,
+    };
     let parties = list_parties(
         conn,
         kind,
@@ -610,6 +643,7 @@ fn debt_report(conn: &Connection, kind: PartyKind, _filters: ReportFilters) -> R
     )?;
     Ok(parties
         .into_iter()
+        .filter(|party| selected_party_id.map(|id| party.id == id).unwrap_or(true))
         .map(|party| {
             json!({
                 "name": party.name,

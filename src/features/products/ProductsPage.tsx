@@ -23,6 +23,7 @@ import {
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
 import ArchiveIcon from "@mui/icons-material/Archive";
+import CancelIcon from "@mui/icons-material/Cancel";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
 import HistoryIcon from "@mui/icons-material/History";
@@ -377,10 +378,22 @@ function ProductDialog({
 }
 
 function MovementDrawer({ product, onClose }: { product: Product | null; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [cancelId, setCancelId] = useState<number | null>(null);
+  const [cancelError, setCancelError] = useState<string | null>(null);
   const { data = [], isLoading } = useQuery({
     queryKey: ["movement", product?.id],
     queryFn: () => productApi.movement(product!.id),
     enabled: Boolean(product)
+  });
+  const cancelMutation = useMutation({
+    mutationFn: (id: number) => productApi.cancelStockAdjustment(id),
+    onSuccess: async () => {
+      setCancelId(null);
+      setCancelError(null);
+      await queryClient.invalidateQueries();
+    },
+    onError: (error) => setCancelError(normalizeError(error).message)
   });
 
   return (
@@ -393,10 +406,20 @@ function MovementDrawer({ product, onClose }: { product: Product | null; onClose
         />
         {isLoading ? <LoadingState /> : data.length === 0 ? <EmptyState label="No movement recorded." /> : (
           <Table id="movement-print" size="small">
-            <TableHead><TableRow><TableCell>Date</TableCell><TableCell>Type</TableCell><TableCell align="right">In</TableCell><TableCell align="right">Out</TableCell><TableCell>Notes</TableCell></TableRow></TableHead>
-            <TableBody>{data.map((row) => <TableRow key={row.id}><TableCell>{row.created_at.slice(0, 10)}</TableCell><TableCell>{row.transaction_type}</TableCell><TableCell align="right">{quantity(row.quantity_in)}</TableCell><TableCell align="right">{quantity(row.quantity_out)}</TableCell><TableCell>{row.notes}</TableCell></TableRow>)}</TableBody>
+            <TableHead><TableRow><TableCell>Date</TableCell><TableCell>Type</TableCell><TableCell align="right">In</TableCell><TableCell align="right">Out</TableCell><TableCell>Status</TableCell><TableCell>Notes</TableCell><TableCell className="print-exclude" align="right">Actions</TableCell></TableRow></TableHead>
+            <TableBody>{data.map((row) => <TableRow key={row.id}><TableCell>{row.created_at.slice(0, 10)}</TableCell><TableCell>{row.transaction_type}</TableCell><TableCell align="right">{quantity(row.quantity_in)}</TableCell><TableCell align="right">{quantity(row.quantity_out)}</TableCell><TableCell>{row.status}</TableCell><TableCell>{row.notes}</TableCell><TableCell className="print-exclude" align="right"><Button size="small" color="error" startIcon={<CancelIcon />} disabled={row.status === "cancelled" || !["manual", "product"].includes(row.reference_type)} onClick={() => { setCancelError(null); setCancelId(row.id); }}>Cancel</Button></TableCell></TableRow>)}</TableBody>
           </Table>
         )}
+        <ConfirmDialog
+          open={cancelId !== null}
+          title="Cancel inventory adjustment"
+          message="The movement remains in history, but its stock effect is removed immediately."
+          confirmLabel="Cancel adjustment"
+          error={cancelError}
+          loading={cancelMutation.isPending}
+          onClose={() => setCancelId(null)}
+          onConfirm={() => cancelId && cancelMutation.mutate(cancelId)}
+        />
       </Box>
     </Drawer>
   );
@@ -411,8 +434,7 @@ function StockAdjustDialog({ product, onClose }: { product: Product | null; onCl
     mutationFn: () => productApi.adjustStock({ product_id: product!.id, transaction_type: type, quantity: Number(amount), notes }),
     onSuccess: async () => {
       onClose();
-      await queryClient.invalidateQueries({ queryKey: ["products"] });
-      await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      await queryClient.invalidateQueries();
     }
   });
 

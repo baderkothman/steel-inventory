@@ -69,7 +69,7 @@ impl PartyKind {
     fn valid_payment_filter(self) -> &'static str {
         match self {
             PartyKind::Supplier => {
-                "(p.reference_type IS NULL OR (
+                "p.status = 'active' AND (p.reference_type IS NULL OR (
                     p.reference_type = 'purchase_invoice'
                     AND EXISTS (
                         SELECT 1
@@ -81,7 +81,7 @@ impl PartyKind {
                 ))"
             }
             PartyKind::Customer => {
-                "(p.reference_type IS NULL OR (
+                "p.status = 'active' AND (p.reference_type IS NULL OR (
                     p.reference_type = 'sales_invoice'
                     AND EXISTS (
                         SELECT 1

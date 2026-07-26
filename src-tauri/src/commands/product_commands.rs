@@ -104,3 +104,13 @@ pub fn adjust_stock(
     let conn = state.open_conn()?;
     inventory_service::adjust_stock(&conn, user_id, payload)
 }
+
+#[tauri::command]
+pub fn cancel_stock_adjustment(
+    state: State<'_, AppState>,
+    transaction_id: i64,
+) -> Result<(), AppError> {
+    let user_id = state.require_user_id()?;
+    let conn = state.open_conn()?;
+    inventory_service::cancel_stock_adjustment(&conn, user_id, transaction_id)
+}

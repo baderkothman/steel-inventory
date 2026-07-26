@@ -9,7 +9,7 @@ Major implemented areas:
 - First-run admin setup, local login, logout, password change, Argon2 password hashing
 - SQLite schema, migrations, indexes, seed data, settings row, category tree, default expense categories
 - Products, categories, suppliers, customers, purchases, sales, expenses, payments, reports, settings, backup/restore
-- Purchase stock-in workflow with invoice items, supplier payment, stock increase, inventory transaction, audit log
+- Purchase workflow with invoice items, supplier payment, stock increase, inventory transaction, audit log
 - Sales stock-out workflow with stock check, snapshots, profit calculation, customer payment, stock decrease, audit log
 - Manual stock adjustments and movement history
 - Customer and supplier balances/statements

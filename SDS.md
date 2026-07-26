@@ -86,7 +86,7 @@ flowchart TD
     A --> D[Categories]
     A --> E[Suppliers]
     A --> F[Customers]
-    A --> G[Purchases / Stock In]
+    A --> G[Purchases]
     A --> H[Sales Invoices]
     A --> I[Expenses]
     A --> J[Payments]
@@ -104,7 +104,7 @@ Module responsibilities:
 | Categories | Manage product categorization                |
 | Suppliers  | Manage supplier profiles and balances        |
 | Customers  | Manage customer profiles and balances        |
-| Purchases  | Record supplier invoices and stock-in        |
+| Purchases  | Record supplier invoices and receive inventory |
 | Sales      | Create customer invoices and stock-out       |
 | Expenses   | Record operating expenses                    |
 | Payments   | Record customer and supplier payments        |
@@ -208,7 +208,7 @@ Products
 Categories
 Suppliers
 Customers
-Purchases / Stock In
+Purchases
 Sales Invoices
 Expenses
 Payments
@@ -1232,7 +1232,7 @@ Test:
 - Add product
 - Add supplier
 - Add customer
-- Enter stock-in invoice
+- Enter purchase invoice
 - Sell product
 - Check stock movement
 - Record expense
@@ -1333,7 +1333,7 @@ Future stack:
 
 - Purchase invoices
 - Purchase invoice items
-- Stock-in transactions
+- Purchase inventory transactions
 - Stock levels
 
 ## Milestone 4: Sales
@@ -1393,7 +1393,7 @@ Future stack:
 flowchart TD
     A[Admin Login] --> B[Dashboard]
     B --> C[Add Products and Categories]
-    C --> D[Add Supplier Invoice / Stock In]
+    C --> D[Add Supplier Purchase Invoice]
     D --> E[Stock Quantity Increases]
     E --> F[Create Sales Invoice]
     F --> G[Stock Quantity Decreases]

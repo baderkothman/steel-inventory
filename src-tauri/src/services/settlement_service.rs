@@ -69,11 +69,28 @@ pub fn create_settlement_payment(
 }
 
 pub fn delete_settlement_payment(conn: &Connection, user_id: i64, id: i64) -> Result<(), AppError> {
-    let affected = conn.execute("DELETE FROM supplier_settlement_payments WHERE id = ?1", [id])?;
+    let tx = conn.unchecked_transaction()?;
+    let affected = tx.execute(
+        "UPDATE supplier_settlement_payments
+         SET lifecycle_status = 'cancelled'
+         WHERE id = ?1 AND lifecycle_status = 'active'",
+        [id],
+    )?;
     if affected == 0 {
-        return Err(AppError::not_found("Settlement payment not found."));
+        let exists: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM supplier_settlement_payments WHERE id = ?1",
+            [id],
+            |row| row.get(0),
+        )?;
+        return if exists > 0 {
+            tx.commit()?;
+            Ok(())
+        } else {
+            Err(AppError::not_found("Settlement payment not found."))
+        };
     }
-    insert_audit_log(conn, user_id, "delete", "supplier_settlement_payments", id, None, None)?;
+    insert_audit_log(&tx, user_id, "cancel", "supplier_settlement_payments", id, None, None)?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -84,7 +101,7 @@ pub fn list_settlement_payments(
     let mut stmt = conn.prepare(
         "SELECT sp.id, sp.supplier_id, COALESCE(s.name, 'Unknown Supplier'),
                 sp.period_start, sp.period_end, sp.amount_cents, sp.currency, sp.status,
-                sp.payment_date, sp.reference, sp.notes, sp.created_at
+                sp.lifecycle_status, sp.payment_date, sp.reference, sp.notes, sp.created_at
          FROM supplier_settlement_payments sp
          LEFT JOIN suppliers s ON s.id = sp.supplier_id
          WHERE (?1 IS NULL OR date(sp.payment_date) >= date(?1))
@@ -105,7 +122,7 @@ pub fn get_settlement_payment(conn: &Connection, id: i64) -> Result<SettlementPa
     conn.query_row(
         "SELECT sp.id, sp.supplier_id, COALESCE(s.name, 'Unknown Supplier'),
                 sp.period_start, sp.period_end, sp.amount_cents, sp.currency, sp.status,
-                sp.payment_date, sp.reference, sp.notes, sp.created_at
+                sp.lifecycle_status, sp.payment_date, sp.reference, sp.notes, sp.created_at
          FROM supplier_settlement_payments sp
          LEFT JOIN suppliers s ON s.id = sp.supplier_id
          WHERE sp.id = ?1",
@@ -147,9 +164,10 @@ fn map_settlement_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SettlementPay
         amount_cents: row.get(5)?,
         currency: row.get(6)?,
         status: row.get(7)?,
-        payment_date: row.get(8)?,
-        reference: row.get(9)?,
-        notes: row.get(10)?,
-        created_at: row.get(11)?,
+        lifecycle_status: row.get(8)?,
+        payment_date: row.get(9)?,
+        reference: row.get(10)?,
+        notes: row.get(11)?,
+        created_at: row.get(12)?,
     })
 }

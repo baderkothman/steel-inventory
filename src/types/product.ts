@@ -97,6 +97,7 @@ export type SettlementPayment = {
   amount_cents: number;
   currency: string;
   status: string;
+  lifecycle_status: string;
   payment_date: string;
   reference?: string | null;
   notes?: string | null;
@@ -121,5 +122,6 @@ export type InventoryTransaction = {
   quantity_out: number;
   unit_cost_cents?: number | null;
   notes?: string | null;
+  status: string;
   created_at: string;
 };

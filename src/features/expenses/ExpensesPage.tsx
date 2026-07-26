@@ -17,7 +17,7 @@ import {
   TextField
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
-import DeleteIcon from "@mui/icons-material/Delete";
+import CancelIcon from "@mui/icons-material/Cancel";
 import EditIcon from "@mui/icons-material/Edit";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -57,18 +57,18 @@ export function ExpensesPage() {
     onSuccess: async () => {
       setForm(null);
       setError(null);
-      await queryClient.invalidateQueries({ queryKey: ["expenses"] });
-      await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      await queryClient.invalidateQueries();
     },
     onError: (err) => setError(normalizeError(err).message)
   });
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => expenseApi.delete(id),
+    mutationFn: (id: number) => expenseApi.cancel(id),
     onSuccess: async () => {
       setDeleteId(null);
-      await queryClient.invalidateQueries({ queryKey: ["expenses"] });
-      await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-    }
+      setError(null);
+      await queryClient.invalidateQueries();
+    },
+    onError: (err) => setError(normalizeError(err).message)
   });
 
   function submit(event: FormEvent) {
@@ -93,8 +93,8 @@ export function ExpensesPage() {
       <Paper id="expenses-print" variant="outlined">
         {expenses.length === 0 ? <EmptyState label="No expenses recorded." /> : (
           <Table size="small">
-            <TableHead><TableRow><TableCell>Date</TableCell><TableCell>Category</TableCell><TableCell>Title</TableCell><TableCell>Method</TableCell><TableCell align="right">Amount</TableCell><TableCell className="print-exclude" align="right">Actions</TableCell></TableRow></TableHead>
-            <TableBody>{expenses.map((expense) => <TableRow key={expense.id} hover><TableCell>{expense.expense_date}</TableCell><TableCell>{expense.category_name}</TableCell><TableCell>{expense.title}</TableCell><TableCell>{expense.payment_method}</TableCell><TableCell align="right"><MoneyText value={expense.amount_cents} currency={expense.currency} /></TableCell><TableCell className="print-exclude" align="right"><Button size="small" startIcon={<EditIcon />} onClick={() => setForm(rowToForm(expense))}>Edit</Button><Button size="small" color="error" startIcon={<DeleteIcon />} onClick={() => setDeleteId(expense.id)}>Delete</Button></TableCell></TableRow>)}</TableBody>
+            <TableHead><TableRow><TableCell>Date</TableCell><TableCell>Category</TableCell><TableCell>Title</TableCell><TableCell>Method</TableCell><TableCell align="right">Amount</TableCell><TableCell>Status</TableCell><TableCell className="print-exclude" align="right">Actions</TableCell></TableRow></TableHead>
+            <TableBody>{expenses.map((expense) => <TableRow key={expense.id} hover><TableCell>{expense.expense_date}</TableCell><TableCell>{expense.category_name}</TableCell><TableCell>{expense.title}</TableCell><TableCell>{expense.payment_method}</TableCell><TableCell align="right"><MoneyText value={expense.amount_cents} currency={expense.currency} /></TableCell><TableCell>{expense.status}</TableCell><TableCell className="print-exclude" align="right"><Button size="small" startIcon={<EditIcon />} disabled={expense.status === "cancelled"} onClick={() => setForm(rowToForm(expense))}>Edit</Button><Button size="small" color="error" startIcon={<CancelIcon />} disabled={expense.status === "cancelled"} onClick={() => setDeleteId(expense.id)}>Cancel</Button></TableCell></TableRow>)}</TableBody>
           </Table>
         )}
       </Paper>
@@ -122,7 +122,7 @@ export function ExpensesPage() {
         </DialogActions>
       </Dialog>
 
-      <ConfirmDialog open={deleteId !== null} title="Delete expense" message="Delete this expense only if it was entered by mistake." confirmLabel="Delete" onClose={() => setDeleteId(null)} onConfirm={() => deleteId && deleteMutation.mutate(deleteId)} />
+      <ConfirmDialog open={deleteId !== null} title="Cancel expense" message="The expense remains in history but is removed from dashboard and financial reports." confirmLabel="Cancel expense" error={error} loading={deleteMutation.isPending} onClose={() => setDeleteId(null)} onConfirm={() => deleteId && deleteMutation.mutate(deleteId)} />
     </Stack>
   );
 }

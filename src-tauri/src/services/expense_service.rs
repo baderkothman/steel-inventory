@@ -33,17 +33,24 @@ pub fn list_expense_categories(conn: &Connection) -> Result<Vec<ExpenseCategory>
 pub fn list_expenses(conn: &Connection, filters: ExpenseFilters) -> Result<Vec<ExpenseRow>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT e.id, e.expense_category_id, ec.name, e.title, e.amount_cents,
-                e.currency, e.expense_date, e.payment_method, e.notes, e.created_at, e.updated_at
+                e.currency, e.expense_date, e.payment_method, e.notes, e.status,
+                e.created_at, e.updated_at
          FROM expenses e
          JOIN expense_categories ec ON ec.id = e.expense_category_id
          WHERE (?1 IS NULL OR date(e.expense_date) >= date(?1))
            AND (?2 IS NULL OR date(e.expense_date) <= date(?2))
            AND (?3 IS NULL OR e.expense_category_id = ?3)
+           AND (?4 = 0 OR e.status = 'active')
          ORDER BY e.expense_date DESC, e.id DESC",
     )?;
     let rows = stmt
         .query_map(
-            params![filters.date_from, filters.date_to, filters.expense_category_id],
+            params![
+                filters.date_from,
+                filters.date_to,
+                filters.expense_category_id,
+                if filters.active_only.unwrap_or(false) { 1 } else { 0 }
+            ],
             map_expense,
         )?
         .collect::<Result<Vec<_>, _>>()?;
@@ -95,7 +102,7 @@ pub fn update_expense(
     payload: ExpensePayload,
 ) -> Result<ExpenseRow, AppError> {
     validate_expense_payload(&payload)?;
-    ensure_expense_exists(conn, id)?;
+    ensure_active_expense_exists(conn, id)?;
     conn.execute(
         "UPDATE expenses
          SET expense_category_id = ?1, title = ?2, amount_cents = ?3, currency = ?4,
@@ -127,16 +134,25 @@ pub fn update_expense(
 }
 
 pub fn delete_expense(conn: &Connection, user_id: i64, id: i64) -> Result<(), AppError> {
-    ensure_expense_exists(conn, id)?;
-    conn.execute("DELETE FROM expenses WHERE id = ?1", [id])?;
-    insert_audit_log(conn, user_id, "delete", "expenses", id, None, None)?;
+    let expense = get_expense(conn, id)?;
+    if expense.status == "cancelled" {
+        return Ok(());
+    }
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "UPDATE expenses SET status = 'cancelled', updated_at = ?1 WHERE id = ?2",
+        params![now_iso(), id],
+    )?;
+    insert_audit_log(&tx, user_id, "cancel", "expenses", id, None, None)?;
+    tx.commit()?;
     Ok(())
 }
 
 fn get_expense(conn: &Connection, id: i64) -> Result<ExpenseRow, AppError> {
     conn.query_row(
         "SELECT e.id, e.expense_category_id, ec.name, e.title, e.amount_cents,
-                e.currency, e.expense_date, e.payment_method, e.notes, e.created_at, e.updated_at
+                e.currency, e.expense_date, e.payment_method, e.notes, e.status,
+                e.created_at, e.updated_at
          FROM expenses e
          JOIN expense_categories ec ON ec.id = e.expense_category_id
          WHERE e.id = ?1",
@@ -149,10 +165,14 @@ fn get_expense(conn: &Connection, id: i64) -> Result<ExpenseRow, AppError> {
     })
 }
 
-fn ensure_expense_exists(conn: &Connection, id: i64) -> Result<(), AppError> {
-    let count: i64 = conn.query_row("SELECT COUNT(*) FROM expenses WHERE id = ?1", [id], |row| row.get(0))?;
+fn ensure_active_expense_exists(conn: &Connection, id: i64) -> Result<(), AppError> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM expenses WHERE id = ?1 AND status = 'active'",
+        [id],
+        |row| row.get(0),
+    )?;
     if count == 0 {
-        Err(AppError::not_found("Expense not found."))
+        Err(AppError::validation("Cancelled expenses cannot be edited."))
     } else {
         Ok(())
     }
@@ -178,7 +198,8 @@ fn map_expense(row: &rusqlite::Row<'_>) -> rusqlite::Result<ExpenseRow> {
         expense_date: row.get(6)?,
         payment_method: row.get(7)?,
         notes: row.get(8)?,
-        created_at: row.get(9)?,
-        updated_at: row.get(10)?,
+        status: row.get(9)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
     })
 }

@@ -1,18 +1,40 @@
 import { FormEvent, useEffect, useState } from "react";
-import { Alert, Button, Paper, Stack, TextField, FormControlLabel, Switch } from "@mui/material";
+import {
+  Alert,
+  Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Divider,
+  FormControlLabel,
+  Paper,
+  Stack,
+  Switch,
+  TextField,
+  Typography
+} from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { PageHeader } from "../../components/PageHeader";
 import { LoadingState } from "../../components/feedback/PageState";
+import { useAuth } from "../auth/AuthContext";
 import { settingsApi } from "../../lib/api";
 import { normalizeError } from "../../lib/tauri";
 import type { CompanySettings } from "../../types/common";
 
 export function SettingsPage() {
   const queryClient = useQueryClient();
+  const { admin } = useAuth();
   const { data, isLoading } = useQuery({ queryKey: ["settings"], queryFn: settingsApi.get });
   const [form, setForm] = useState<CompanySettings | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [clearStep, setClearStep] = useState<"credentials" | "confirm" | null>(null);
+  const [adminEmail, setAdminEmail] = useState("");
+  const [adminPassword, setAdminPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [clearError, setClearError] = useState<string | null>(null);
+  const [clearMessage, setClearMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (data) setForm(data);
@@ -38,6 +60,22 @@ export function SettingsPage() {
       await queryClient.invalidateQueries({ queryKey: ["settings"] });
     },
     onError: (err) => setError(normalizeError(err).message)
+  });
+  const clearMutation = useMutation({
+    mutationFn: () => settingsApi.clearAllData({
+      admin_email: adminEmail,
+      admin_password: adminPassword,
+      confirmation
+    }),
+    onSuccess: async (result) => {
+      setClearStep(null);
+      setAdminPassword("");
+      setConfirmation("");
+      setClearError(null);
+      setClearMessage(`${result.message} ${result.deleted_records} records were removed.`);
+      await queryClient.invalidateQueries();
+    },
+    onError: (err) => setClearError(normalizeError(err).message)
   });
 
   function submit(event: FormEvent) {
@@ -68,6 +106,119 @@ export function SettingsPage() {
           <Button type="submit" variant="contained" disabled={mutation.isPending}>Save settings</Button>
         </Stack>
       </Paper>
+      {admin?.role === "admin" ? (
+        <Paper variant="outlined" sx={{ p: 3, maxWidth: 820, borderColor: "error.main" }}>
+          <Stack spacing={2}>
+            <Typography variant="h6" color="error">Danger zone</Typography>
+            {clearMessage ? <Alert severity="success">{clearMessage}</Alert> : null}
+            <Typography variant="body2" color="text.secondary">
+              Clear All Data permanently removes products, parties, invoices, payments, inventory,
+              expenses, backup history, demo data, and business logs. Your administrator account and
+              company settings remain.
+            </Typography>
+            <Divider />
+            <Button
+              color="error"
+              variant="contained"
+              sx={{ alignSelf: "flex-start" }}
+              onClick={() => {
+                setAdminEmail(admin.email);
+                setAdminPassword("");
+                setConfirmation("");
+                setClearError(null);
+                setClearStep("credentials");
+              }}
+            >
+              Clear All Data
+            </Button>
+          </Stack>
+        </Paper>
+      ) : null}
+
+      <Dialog
+        open={clearStep === "credentials"}
+        onClose={() => !clearMutation.isPending && setClearStep(null)}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>Verify administrator</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <Alert severity="error">
+              This reset is irreversible. Existing backups and records listed above will be
+              removed from the application.
+            </Alert>
+            {clearError ? <Alert severity="error">{clearError}</Alert> : null}
+            <TextField
+              label="Admin email"
+              type="email"
+              required
+              value={adminEmail}
+              onChange={(event) => setAdminEmail(event.target.value)}
+            />
+            <TextField
+              label="Admin password"
+              type="password"
+              required
+              autoComplete="current-password"
+              value={adminPassword}
+              onChange={(event) => setAdminPassword(event.target.value)}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setClearStep(null)}>Cancel</Button>
+          <Button
+            color="error"
+            variant="contained"
+            disabled={!adminEmail.trim() || !adminPassword}
+            onClick={() => {
+              setClearError(null);
+              setClearStep("confirm");
+            }}
+          >
+            Continue
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={clearStep === "confirm"}
+        onClose={() => !clearMutation.isPending && setClearStep(null)}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>Final confirmation</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <Alert severity="error">
+              All operational data will be permanently deleted in one database transaction.
+              This cannot be undone.
+            </Alert>
+            {clearError ? <Alert severity="error">{clearError}</Alert> : null}
+            <Typography variant="body2">
+              Type <strong>CLEAR ALL DATA</strong> to continue.
+            </Typography>
+            <TextField
+              label="Confirmation"
+              value={confirmation}
+              onChange={(event) => setConfirmation(event.target.value)}
+              autoFocus
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button disabled={clearMutation.isPending} onClick={() => setClearStep("credentials")}>Back</Button>
+          <Button
+            color="error"
+            variant="contained"
+            disabled={confirmation !== "CLEAR ALL DATA" || clearMutation.isPending}
+            onClick={() => clearMutation.mutate()}
+          >
+            {clearMutation.isPending ? "Clearing…" : "Permanently clear data"}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Stack>
   );
 }

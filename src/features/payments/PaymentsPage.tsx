@@ -17,7 +17,7 @@ import {
   TextField
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
-import DeleteIcon from "@mui/icons-material/Delete";
+import CancelIcon from "@mui/icons-material/Cancel";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { MoneyText } from "../../components/MoneyText";
@@ -61,20 +61,18 @@ export function PaymentsPage() {
     onSuccess: async () => {
       setForm(null);
       setError(null);
-      await queryClient.invalidateQueries({ queryKey: ["payments"] });
-      await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-      await queryClient.invalidateQueries({ queryKey: ["customer"] });
-      await queryClient.invalidateQueries({ queryKey: ["supplier"] });
+      await queryClient.invalidateQueries();
     },
     onError: (err) => setError(normalizeError(err).message)
   });
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => paymentApi.delete(id),
+    mutationFn: (id: number) => paymentApi.cancel(id),
     onSuccess: async () => {
       setDeleteId(null);
-      await queryClient.invalidateQueries({ queryKey: ["payments"] });
-      await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-    }
+      setError(null);
+      await queryClient.invalidateQueries();
+    },
+    onError: (err) => setError(normalizeError(err).message)
   });
 
   function submit(event: FormEvent) {
@@ -95,8 +93,8 @@ export function PaymentsPage() {
       <Paper id="payments-print" variant="outlined">
         {payments.length === 0 ? <EmptyState label="No payments recorded." /> : (
           <Table size="small">
-            <TableHead><TableRow><TableCell>Date</TableCell><TableCell>Party</TableCell><TableCell>Direction</TableCell><TableCell>Method</TableCell><TableCell align="right">Amount</TableCell><TableCell>Reference</TableCell><TableCell className="print-exclude" align="right">Actions</TableCell></TableRow></TableHead>
-            <TableBody>{payments.map((payment) => <TableRow key={payment.id} hover><TableCell>{payment.payment_date}</TableCell><TableCell>{payment.party_name}</TableCell><TableCell>{payment.payment_direction}</TableCell><TableCell>{payment.payment_method}</TableCell><TableCell align="right"><MoneyText value={payment.amount_cents} currency={payment.currency} /></TableCell><TableCell>{payment.reference_type ? `${payment.reference_type} #${payment.reference_id}` : "General"}</TableCell><TableCell className="print-exclude" align="right"><Button size="small" color="error" startIcon={<DeleteIcon />} onClick={() => setDeleteId(payment.id)}>Delete</Button></TableCell></TableRow>)}</TableBody>
+            <TableHead><TableRow><TableCell>Date</TableCell><TableCell>Party</TableCell><TableCell>Direction</TableCell><TableCell>Method</TableCell><TableCell align="right">Amount</TableCell><TableCell>Reference</TableCell><TableCell>Status</TableCell><TableCell className="print-exclude" align="right">Actions</TableCell></TableRow></TableHead>
+            <TableBody>{payments.map((payment) => <TableRow key={payment.id} hover><TableCell>{payment.payment_date}</TableCell><TableCell>{payment.party_name}</TableCell><TableCell>{payment.payment_direction}</TableCell><TableCell>{payment.payment_method}</TableCell><TableCell align="right"><MoneyText value={payment.amount_cents} currency={payment.currency} /></TableCell><TableCell>{payment.reference_type ? `${payment.reference_type} #${payment.reference_id}` : "General"}</TableCell><TableCell>{payment.status}</TableCell><TableCell className="print-exclude" align="right"><Button size="small" color="error" startIcon={<CancelIcon />} disabled={payment.status === "cancelled"} onClick={() => setDeleteId(payment.id)}>Cancel</Button></TableCell></TableRow>)}</TableBody>
           </Table>
         )}
       </Paper>
@@ -132,7 +130,7 @@ export function PaymentsPage() {
         </DialogActions>
       </Dialog>
 
-      <ConfirmDialog open={deleteId !== null} title="Delete payment" message="Deleting a linked payment also updates the cached invoice paid and remaining values." confirmLabel="Delete" onClose={() => setDeleteId(null)} onConfirm={() => deleteId && deleteMutation.mutate(deleteId)} />
+      <ConfirmDialog open={deleteId !== null} title="Cancel payment" message="The payment remains in history but is removed from balances, reports, cash totals, and any linked invoice." confirmLabel="Cancel payment" error={error} loading={deleteMutation.isPending} onClose={() => setDeleteId(null)} onConfirm={() => deleteId && deleteMutation.mutate(deleteId)} />
     </Stack>
   );
 }

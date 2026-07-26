@@ -81,6 +81,7 @@ function InvoicePage({ kind }: { kind: Kind }) {
   const [cancelId, setCancelId] = useState<number | null>(null);
   const [printHtml, setPrintHtml] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [cancelError, setCancelError] = useState<string | null>(null);
 
   const { data: invoices = [], isLoading } = useQuery({ queryKey: [kind, "invoices"], queryFn: () => invoiceApi.list() });
   const { data: parties = [] } = useQuery({ queryKey: [kind, "parties"], queryFn: () => partyApi.list({ active_only: true }) });
@@ -124,11 +125,7 @@ function InvoicePage({ kind }: { kind: Kind }) {
     onSuccess: async () => {
       setForm(null);
       setError(null);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: [kind, "invoices"] }),
-        queryClient.invalidateQueries({ queryKey: ["products"] }),
-        queryClient.invalidateQueries({ queryKey: ["dashboard"] })
-      ]);
+      await queryClient.invalidateQueries();
     },
     onError: (err) => setError(normalizeError(err).message)
   });
@@ -137,12 +134,10 @@ function InvoicePage({ kind }: { kind: Kind }) {
     mutationFn: (id: number) => invoiceApi.cancel(id),
     onSuccess: async () => {
       setCancelId(null);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: [kind, "invoices"] }),
-        queryClient.invalidateQueries({ queryKey: ["products"] }),
-        queryClient.invalidateQueries({ queryKey: ["dashboard"] })
-      ]);
-    }
+      setCancelError(null);
+      await queryClient.invalidateQueries();
+    },
+    onError: (err) => setCancelError(normalizeError(err).message)
   });
 
   async function printInvoice(id: number) {
@@ -151,7 +146,7 @@ function InvoicePage({ kind }: { kind: Kind }) {
 
   if (isLoading) return <LoadingState label={`Loading ${kind} invoices`} />;
 
-  const title = kind === "purchase" ? "Purchases / Stock In" : "Sales Invoices";
+  const title = kind === "purchase" ? "Purchases" : "Sales Invoices";
   const partyLabel = kind === "purchase" ? "Supplier" : "Customer";
 
   return (
@@ -171,7 +166,7 @@ function InvoicePage({ kind }: { kind: Kind }) {
         {invoices.length === 0 ? <EmptyState label="No invoices recorded yet." /> : (
           <Table size="small">
             <TableHead><TableRow><TableCell>Invoice</TableCell><TableCell>Date</TableCell><TableCell>{partyLabel}</TableCell><TableCell align="right">Total</TableCell><TableCell align="right">Paid</TableCell><TableCell align="right">Remaining</TableCell><TableCell>Status</TableCell><TableCell className="print-exclude" align="right">Actions</TableCell></TableRow></TableHead>
-            <TableBody>{invoices.map((invoice) => <InvoiceRow key={invoice.id} invoice={invoice} onPrint={printInvoice} onCancel={setCancelId} />)}</TableBody>
+            <TableBody>{invoices.map((invoice) => <InvoiceRow key={invoice.id} invoice={invoice} onPrint={printInvoice} onCancel={(id) => { setCancelError(null); setCancelId(id); }} />)}</TableBody>
           </Table>
         )}
       </Paper>
@@ -194,9 +189,14 @@ function InvoicePage({ kind }: { kind: Kind }) {
       <ConfirmDialog
         open={cancelId !== null}
         title="Cancel invoice"
-        message="Cancelling an invoice reverses its stock movement and removes its linked invoice payment."
+        message="Cancelling an invoice reverses its stock effect and deactivates its linked payment. The cancelled history is preserved."
         confirmLabel="Cancel invoice"
-        onClose={() => setCancelId(null)}
+        error={cancelError}
+        loading={cancelMutation.isPending}
+        onClose={() => {
+          setCancelId(null);
+          setCancelError(null);
+        }}
         onConfirm={() => cancelId && cancelMutation.mutate(cancelId)}
       />
       <PrintDialog open={Boolean(printHtml)} html={printHtml} onClose={() => setPrintHtml("")} />

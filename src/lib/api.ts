@@ -1,5 +1,12 @@
 import { call } from "./tauri";
-import type { AdminUser, BackupRow, Category, CompanySettings, DateRangeFilters } from "../types/common";
+import type {
+  AdminUser,
+  BackupRow,
+  Category,
+  ClearAllDataResult,
+  CompanySettings,
+  DateRangeFilters
+} from "../types/common";
 import type { InvoiceListRow, InvoiceSaveResult, PurchaseInvoicePayload, SalesInvoicePayload } from "../types/invoice";
 import type { ExpenseCategory, ExpensePayload, ExpenseRow, PaymentPayload, PaymentRow } from "../types/payment";
 import type { Party, PartyPayload, StatementRow } from "../types/party";
@@ -52,6 +59,8 @@ export const productApi = {
     unit_cost_cents?: number | null;
     notes?: string | null;
   }) => call<void>("adjust_stock", { payload }),
+  cancelStockAdjustment: (transaction_id: number) =>
+    call<void>("cancel_stock_adjustment", { transaction_id }),
   generateSku: (payload: ProductPayload) => call<string>("generate_product_sku", { payload }),
   supplierVariants: (filters: VariantFilters = {}) =>
     call<SupplierVariant[]>("list_supplier_variants", { filters })
@@ -60,7 +69,7 @@ export const productApi = {
 export const settlementApi = {
   list: (filters: SettlementFilters = {}) => call<SettlementPayment[]>("list_settlement_payments", { filters }),
   create: (payload: SettlementPaymentPayload) => call<SettlementPayment>("create_settlement_payment", { payload }),
-  delete: (id: number) => call<void>("delete_settlement_payment", { id })
+  cancel: (id: number) => call<void>("delete_settlement_payment", { id })
 };
 
 function partyApi(kind: "supplier" | "customer") {
@@ -98,13 +107,13 @@ export const expenseApi = {
   list: (filters = {}) => call<ExpenseRow[]>("list_expenses", { filters }),
   create: (payload: ExpensePayload) => call<ExpenseRow>("create_expense", { payload }),
   update: (id: number, payload: ExpensePayload) => call<ExpenseRow>("update_expense", { id, payload }),
-  delete: (id: number) => call<void>("delete_expense", { id })
+  cancel: (id: number) => call<void>("delete_expense", { id })
 };
 
 export const paymentApi = {
   list: (filters = {}) => call<PaymentRow[]>("list_payments", { filters }),
   create: (payload: PaymentPayload) => call<PaymentRow>("create_payment", { payload }),
-  delete: (id: number) => call<void>("delete_payment", { id })
+  cancel: (id: number) => call<void>("delete_payment", { id })
 };
 
 export const reportApi = {
@@ -136,7 +145,12 @@ export const seedApi = {
 export const settingsApi = {
   get: () => call<CompanySettings>("get_company_settings"),
   update: (payload: Omit<CompanySettings, "id" | "created_at" | "updated_at">) =>
-    call<CompanySettings>("update_company_settings", { payload })
+    call<CompanySettings>("update_company_settings", { payload }),
+  clearAllData: (payload: {
+    admin_email: string;
+    admin_password: string;
+    confirmation: string;
+  }) => call<ClearAllDataResult>("clear_all_data", { payload })
 };
 
 export const backupApi = {

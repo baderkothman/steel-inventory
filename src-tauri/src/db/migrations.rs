@@ -7,6 +7,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("002_seed_data", include_str!("migrations/002_seed_data.sql")),
     ("003_supplier_product_variants", include_str!("migrations/003_supplier_product_variants.sql")),
     ("004_accounting_integrity", include_str!("migrations/004_accounting_integrity.sql")),
+    ("005_transaction_lifecycle", include_str!("migrations/005_transaction_lifecycle.sql")),
 ];
 
 pub fn run_migrations(conn: &mut Connection) -> Result<(), AppError> {

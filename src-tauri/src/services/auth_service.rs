@@ -139,6 +139,39 @@ pub fn change_password(
     Ok(())
 }
 
+pub fn verify_admin_credentials(
+    conn: &Connection,
+    user_id: i64,
+    email: &str,
+    password: &str,
+) -> Result<(), AppError> {
+    required(email, "Admin email")?;
+    required(password, "Admin password")?;
+    let credentials = conn.query_row(
+        "SELECT id, password_hash, role
+         FROM users
+         WHERE lower(email) = lower(?1) AND is_active = 1
+         LIMIT 1",
+        [email.trim()],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        },
+    );
+    let (credential_user_id, password_hash, role) = match credentials {
+        Ok(value) => value,
+        Err(rusqlite::Error::QueryReturnedNoRows) => return Err(AppError::unauthorized()),
+        Err(error) => return Err(error.into()),
+    };
+    if credential_user_id != user_id || role != "admin" {
+        return Err(AppError::unauthorized());
+    }
+    verify_password(password, &password_hash)
+}
+
 fn validate_password(value: &str) -> Result<(), AppError> {
     required(value, "Password or PIN")?;
     if value.chars().count() < 4 {

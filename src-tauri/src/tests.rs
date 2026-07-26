@@ -3,17 +3,24 @@ use rusqlite::Connection;
 use crate::{
     db::migrations::run_migrations,
     models::{
-        PartyPayload, PaymentPayload, ProductPayload, PurchaseInvoicePayload, PurchaseItemPayload,
-        ReportFilters, SalesInvoicePayload, SalesItemPayload, SetupAdminPayload,
+        ClearAllDataPayload, ExpensePayload, MovementFilters, PartyPayload, PaymentFilters,
+        PaymentPayload, ProductPayload, PurchaseInvoicePayload, PurchaseItemPayload, ReportFilters,
+        SalesInvoicePayload, SalesItemPayload, SetupAdminPayload,
     },
     services::{
         auth_service::setup_admin,
+        data_lifecycle_service::clear_all_data,
+        expense_service::{create_expense, delete_expense, list_expenses},
+        inventory_service::{adjust_stock, cancel_stock_adjustment, list_product_movement},
         party_service::{archive_party, create_party, party_balance, PartyKind},
-        payment_service::{create_payment, delete_payment},
-        product_service::{create_product, delete_product},
-        purchase_service::create_purchase_invoice,
-        report_service::{dashboard_summary, stock_report},
-        sales_service::create_sales_invoice,
+        payment_service::{create_payment, delete_payment, list_payments},
+        product_service::{create_product, delete_product, latest_price},
+        purchase_service::{cancel_purchase_invoice, create_purchase_invoice, list_purchase_invoices},
+        report_service::{
+            dashboard_summary, daily_sales_report, expense_report, payment_report, profit_report,
+            purchase_report, stock_movement_report, stock_report,
+        },
+        sales_service::{cancel_sales_invoice, create_sales_invoice, list_sales_invoices},
         seed_service::seed_demo_data,
     },
     utils::{
@@ -551,7 +558,7 @@ fn settlement_report_owes_correct_supplier_and_excludes_cancelled() {
     assert_eq!(report[0]["owed_cents"], 4500);
 
     // Record a partial settlement and confirm the summary remaining balance.
-    crate::services::settlement_service::create_settlement_payment(
+    let settlement = crate::services::settlement_service::create_settlement_payment(
         &conn,
         user,
         crate::models::SettlementPaymentPayload {
@@ -575,6 +582,20 @@ fn settlement_report_owes_correct_supplier_and_excludes_cancelled() {
     assert_eq!(y["owed_cents"], 4500);
     assert_eq!(y["settled_cents"], 2000);
     assert_eq!(y["remaining_cents"], 2500);
+
+    crate::services::settlement_service::delete_settlement_payment(&conn, user, settlement.id)
+        .unwrap();
+    let summary_after_cancel = crate::services::report_service::supplier_settlement_summary(
+        &conn,
+        crate::models::ReportFilters::default(),
+    )
+    .unwrap();
+    let y_after_cancel = summary_after_cancel
+        .iter()
+        .find(|row| row["supplier"] == "Company Y")
+        .unwrap();
+    assert_eq!(y_after_cancel["settled_cents"], 0);
+    assert_eq!(y_after_cancel["remaining_cents"], 4500);
 }
 
 #[test]
@@ -932,4 +953,416 @@ fn linked_payment_delete_restores_invoice_and_rejects_the_wrong_customer() {
         )
         .unwrap();
     assert_eq!(remaining, 10_000);
+}
+
+#[test]
+fn cancelled_invoices_leave_history_but_no_stock_financial_dashboard_or_report_effect() {
+    let conn = test_conn();
+    let user = make_admin(&conn);
+    let supplier = make_supplier(&conn, user, "Lifecycle Supplier");
+    let customer = create_party(
+        &conn,
+        user,
+        PartyKind::Customer,
+        PartyPayload {
+            name: "Lifecycle Customer".to_string(),
+            company_name: None,
+            phone: None,
+            email: None,
+            address: None,
+            tax_number: None,
+            opening_balance_cents: 0,
+            notes: None,
+        },
+    )
+    .unwrap();
+    let product = create_product(
+        &conn,
+        user,
+        round_pipe_payload(Some(supplier), "Lifecycle Product", 800, 1_500),
+    )
+    .unwrap();
+
+    let first_purchase = create_purchase_invoice(
+        &conn,
+        user,
+        PurchaseInvoicePayload {
+            supplier_id: supplier,
+            invoice_number: Some("PI-LIFECYCLE-1".to_string()),
+            invoice_date: today_date(),
+            discount_cents: 0,
+            tax_cents: 0,
+            shipping_cents: 0,
+            paid_cents: 2_000,
+            notes: None,
+            items: vec![PurchaseItemPayload {
+                product_id: product.id,
+                quantity: 10.0,
+                unit_cost_cents: 1_000,
+            }],
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT current_quantity FROM stock_levels WHERE product_id = ?1",
+            [product.id],
+            |row| row.get::<_, f64>(0)
+        )
+        .unwrap(),
+        10.0
+    );
+    assert_eq!(latest_price(&conn, product.id).unwrap().0, 1_000);
+
+    cancel_purchase_invoice(&conn, user, first_purchase.id).unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT current_quantity FROM stock_levels WHERE product_id = ?1",
+            [product.id],
+            |row| row.get::<_, f64>(0)
+        )
+        .unwrap(),
+        0.0
+    );
+    assert_eq!(latest_price(&conn, product.id).unwrap().0, 800);
+    assert_eq!(party_balance(&conn, PartyKind::Supplier, supplier).unwrap(), 0);
+
+    let second_purchase = create_purchase_invoice(
+        &conn,
+        user,
+        PurchaseInvoicePayload {
+            supplier_id: supplier,
+            invoice_number: Some("PI-LIFECYCLE-2".to_string()),
+            invoice_date: today_date(),
+            discount_cents: 0,
+            tax_cents: 0,
+            shipping_cents: 0,
+            paid_cents: 2_000,
+            notes: None,
+            items: vec![PurchaseItemPayload {
+                product_id: product.id,
+                quantity: 10.0,
+                unit_cost_cents: 1_100,
+            }],
+        },
+    )
+    .unwrap();
+    let sale = create_sales_invoice(
+        &conn,
+        user,
+        SalesInvoicePayload {
+            customer_id: Some(customer.id),
+            invoice_number: Some("SI-LIFECYCLE-1".to_string()),
+            invoice_date: today_date(),
+            discount_cents: 0,
+            tax_cents: 0,
+            delivery_cents: 0,
+            paid_cents: 2_000,
+            notes: None,
+            items: vec![SalesItemPayload {
+                product_id: product.id,
+                quantity: 4.0,
+                unit_price_cents: 1_500,
+            }],
+        },
+    )
+    .unwrap();
+    let active_summary = dashboard_summary(&conn, Some(today_date())).unwrap();
+    assert_eq!(active_summary.today_sales_count, 1);
+    assert_eq!(active_summary.today_purchase_count, 1);
+    assert_eq!(active_summary.today_sales_cents, 6_000);
+    assert_eq!(party_balance(&conn, PartyKind::Customer, customer.id).unwrap(), 4_000);
+
+    cancel_sales_invoice(&conn, user, sale.id).unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT current_quantity FROM stock_levels WHERE product_id = ?1",
+            [product.id],
+            |row| row.get::<_, f64>(0)
+        )
+        .unwrap(),
+        10.0
+    );
+    assert_eq!(party_balance(&conn, PartyKind::Customer, customer.id).unwrap(), 0);
+    cancel_purchase_invoice(&conn, user, second_purchase.id).unwrap();
+
+    let summary = dashboard_summary(&conn, Some(today_date())).unwrap();
+    assert_eq!(summary.today_sales_count, 0);
+    assert_eq!(summary.today_purchase_count, 0);
+    assert_eq!(summary.today_sales_cents, 0);
+    assert_eq!(summary.today_paid_cents, 0);
+    assert_eq!(summary.today_remaining_cents, 0);
+    assert_eq!(summary.today_profit_cents, 0);
+    assert_eq!(summary.current_stock_value_cents, 0);
+    assert_eq!(summary.total_customer_debts_cents, 0);
+    assert_eq!(summary.total_supplier_debts_cents, 0);
+    assert!(summary.recent_sales_invoices.is_empty());
+    assert!(summary.recent_purchase_invoices.is_empty());
+    assert_eq!(
+        conn.query_row(
+            "SELECT current_quantity FROM stock_levels WHERE product_id = ?1",
+            [product.id],
+            |row| row.get::<_, f64>(0)
+        )
+        .unwrap(),
+        0.0
+    );
+
+    assert!(daily_sales_report(&conn, ReportFilters::default()).unwrap().is_empty());
+    assert!(profit_report(&conn, ReportFilters::default()).unwrap().is_empty());
+    assert!(purchase_report(&conn, ReportFilters::default()).unwrap().is_empty());
+    assert!(stock_movement_report(&conn, ReportFilters::default()).unwrap().is_empty());
+    assert!(payment_report(&conn, ReportFilters::default()).unwrap().is_empty());
+
+    let sales_history = list_sales_invoices(&conn, Default::default()).unwrap();
+    let purchase_history = list_purchase_invoices(&conn, Default::default()).unwrap();
+    let payment_history = list_payments(&conn, PaymentFilters::default()).unwrap();
+    let movement_history =
+        list_product_movement(&conn, product.id, MovementFilters::default()).unwrap();
+    assert_eq!(sales_history.len(), 1);
+    assert!(sales_history.iter().all(|row| row.status == "cancelled"));
+    assert_eq!(purchase_history.len(), 2);
+    assert!(purchase_history.iter().all(|row| row.status == "cancelled"));
+    assert_eq!(payment_history.len(), 3);
+    assert!(payment_history.iter().all(|row| row.status == "cancelled"));
+    assert_eq!(movement_history.len(), 3);
+    assert!(movement_history.iter().all(|row| row.status == "cancelled"));
+}
+
+#[test]
+fn cancelled_payments_expenses_and_manual_movements_are_history_only() {
+    let conn = test_conn();
+    let user = make_admin(&conn);
+    let customer = create_party(
+        &conn,
+        user,
+        PartyKind::Customer,
+        PartyPayload {
+            name: "Lifecycle Cash Customer".to_string(),
+            company_name: None,
+            phone: None,
+            email: None,
+            address: None,
+            tax_number: None,
+            opening_balance_cents: 5_000,
+            notes: None,
+        },
+    )
+    .unwrap();
+    let payment = create_payment(
+        &conn,
+        user,
+        PaymentPayload {
+            party_type: "customer".to_string(),
+            party_id: customer.id,
+            amount_cents: 2_000,
+            currency: "USD".to_string(),
+            payment_method: "cash".to_string(),
+            payment_date: today_date(),
+            reference_type: None,
+            reference_id: None,
+            notes: None,
+        },
+    )
+    .unwrap();
+    delete_payment(&conn, user, payment.id).unwrap();
+    assert_eq!(party_balance(&conn, PartyKind::Customer, customer.id).unwrap(), 5_000);
+    assert!(payment_report(&conn, ReportFilters::default()).unwrap().is_empty());
+
+    let expense_category: i64 = conn
+        .query_row("SELECT id FROM expense_categories ORDER BY id LIMIT 1", [], |row| row.get(0))
+        .unwrap();
+    let expense = create_expense(
+        &conn,
+        user,
+        ExpensePayload {
+            expense_category_id: expense_category,
+            title: "Cancelled test expense".to_string(),
+            amount_cents: 1_500,
+            currency: "USD".to_string(),
+            expense_date: today_date(),
+            payment_method: "cash".to_string(),
+            notes: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        dashboard_summary(&conn, Some(today_date()))
+            .unwrap()
+            .today_expenses_cents,
+        1_500
+    );
+    delete_expense(&conn, user, expense.id).unwrap();
+    assert_eq!(
+        dashboard_summary(&conn, Some(today_date()))
+            .unwrap()
+            .today_expenses_cents,
+        0
+    );
+    assert!(expense_report(&conn, ReportFilters::default()).unwrap().is_empty());
+    let expense_history = list_expenses(&conn, Default::default()).unwrap();
+    assert_eq!(expense_history[0].status, "cancelled");
+
+    let supplier = make_supplier(&conn, user, "Adjustment Supplier");
+    let product = create_product(
+        &conn,
+        user,
+        round_pipe_payload(Some(supplier), "Adjustment Product", 1_000, 1_500),
+    )
+    .unwrap();
+    adjust_stock(
+        &conn,
+        user,
+        crate::models::StockAdjustmentPayload {
+            product_id: product.id,
+            transaction_type: "adjustment_in".to_string(),
+            quantity: 7.0,
+            unit_cost_cents: Some(1_000),
+            notes: None,
+        },
+    )
+    .unwrap();
+    let movement_id: i64 = conn
+        .query_row(
+            "SELECT id FROM inventory_transactions WHERE product_id = ?1 ORDER BY id DESC LIMIT 1",
+            [product.id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    cancel_stock_adjustment(&conn, user, movement_id).unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT current_quantity FROM stock_levels WHERE product_id = ?1",
+            [product.id],
+            |row| row.get::<_, f64>(0)
+        )
+        .unwrap(),
+        0.0
+    );
+    assert!(stock_movement_report(&conn, ReportFilters::default()).unwrap().is_empty());
+}
+
+#[test]
+fn clear_all_data_is_credential_guarded_transactional_and_preserves_system_state() {
+    let mut conn = test_conn();
+    let user = make_admin(&conn);
+    seed_demo_data(&mut conn, user).unwrap();
+    let product_count_before: i64 =
+        conn.query_row("SELECT COUNT(*) FROM products", [], |row| row.get(0)).unwrap();
+
+    let unauthorized = clear_all_data(
+        &conn,
+        user,
+        ClearAllDataPayload {
+            admin_email: "admin@example.com".to_string(),
+            admin_password: "wrong-password".to_string(),
+            confirmation: "CLEAR ALL DATA".to_string(),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(unauthorized.code, "UNAUTHORIZED");
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM products", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        product_count_before
+    );
+
+    conn.execute_batch(
+        "CREATE TRIGGER fail_clear_all_data_test
+         BEFORE INSERT ON categories
+         WHEN NEW.id = 1
+         BEGIN
+             SELECT RAISE(ABORT, 'forced reset failure');
+         END;",
+    )
+    .unwrap();
+    clear_all_data(
+        &conn,
+        user,
+        ClearAllDataPayload {
+            admin_email: "admin@example.com".to_string(),
+            admin_password: "1234".to_string(),
+            confirmation: "CLEAR ALL DATA".to_string(),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM products", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        product_count_before,
+        "a failure after deletes must roll the entire reset back"
+    );
+    conn.execute_batch("DROP TRIGGER fail_clear_all_data_test;").unwrap();
+
+    let result = clear_all_data(
+        &conn,
+        user,
+        ClearAllDataPayload {
+            admin_email: "admin@example.com".to_string(),
+            admin_password: "1234".to_string(),
+            confirmation: "CLEAR ALL DATA".to_string(),
+        },
+    )
+    .unwrap();
+    assert!(result.deleted_records > 0);
+    for table in [
+        "products",
+        "customers",
+        "purchase_invoices",
+        "sales_invoices",
+        "payments",
+        "inventory_transactions",
+        "expenses",
+        "supplier_settlement_payments",
+        "backups",
+    ] {
+        let count: i64 = conn
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0, "{table} must be empty after reset");
+    }
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM users", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM company_settings", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM categories", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        23
+    );
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM expense_categories", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        9
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM suppliers WHERE name = 'Unknown Supplier'",
+            [],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM audit_logs WHERE action = 'clear_all_data'",
+            [],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+    let dashboard = dashboard_summary(&conn, Some(today_date())).unwrap();
+    assert_eq!(dashboard.today_sales_count, 0);
+    assert_eq!(dashboard.today_purchase_count, 0);
+    assert_eq!(dashboard.today_sales_cents, 0);
+    assert_eq!(dashboard.today_expenses_cents, 0);
+    assert_eq!(dashboard.current_stock_value_cents, 0);
 }

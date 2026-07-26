@@ -11,6 +11,8 @@ import { reportApi, seedApi } from "../../lib/api";
 import { quantity } from "../../lib/formatters";
 
 const cards = [
+  ["today_sales_count", "Today's sales count"],
+  ["today_purchase_count", "Today's purchase count"],
   ["today_sales_cents", "Today's sales"],
   ["today_profit_cents", "Today's profit"],
   ["today_expenses_cents", "Today's expenses"],
@@ -20,6 +22,8 @@ const cards = [
   ["current_stock_value_cents", "Current stock value"],
   ["low_stock_count", "Low-stock products"]
 ] as const;
+
+const countCards = new Set(["today_sales_count", "today_purchase_count", "low_stock_count"]);
 
 export function DashboardPage() {
   const queryClient = useQueryClient();
@@ -32,18 +36,7 @@ export function DashboardPage() {
     mutationFn: seedApi.demoData,
     onSuccess: async (result) => {
       setToast(result.message);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
-        queryClient.invalidateQueries({ queryKey: ["products"] }),
-        queryClient.invalidateQueries({ queryKey: ["categories"] }),
-        queryClient.invalidateQueries({ queryKey: ["supplier"] }),
-        queryClient.invalidateQueries({ queryKey: ["customer"] }),
-        queryClient.invalidateQueries({ queryKey: ["purchase"] }),
-        queryClient.invalidateQueries({ queryKey: ["sales"] }),
-        queryClient.invalidateQueries({ queryKey: ["expenses"] }),
-        queryClient.invalidateQueries({ queryKey: ["payments"] }),
-        queryClient.invalidateQueries({ queryKey: ["backups"] })
-      ]);
+      await queryClient.invalidateQueries();
     },
     onError: (error) => setToast(error instanceof Error ? error.message : "Could not seed demo data.")
   });
@@ -86,7 +79,7 @@ export function DashboardPage() {
                     {label}
                   </Typography>
                   <Typography variant="h5" sx={{ mt: 1, fontVariantNumeric: "tabular-nums" }}>
-                    {key === "low_stock_count" ? data.low_stock_count : <MoneyText value={data[key]} />}
+                    {countCards.has(key) ? data[key] : <MoneyText value={data[key]} />}
                   </Typography>
                 </CardContent>
               </Card>

@@ -15,6 +15,7 @@ export type ExpenseRow = {
   expense_date: string;
   payment_method: string;
   notes?: string | null;
+  status: string;
   created_at: string;
   updated_at: string;
 };
@@ -42,6 +43,7 @@ export type PaymentRow = {
   reference_type?: string | null;
   reference_id?: number | null;
   notes?: string | null;
+  status: string;
   created_at: string;
 };
 

@@ -339,7 +339,7 @@ pub fn seed_demo_data(conn: &mut Connection, user_id: i64) -> Result<DemoSeedRes
         0,
         15_000,
         120_000,
-        Some("Main pipe and sheet stock-in."),
+        Some("Main pipe and sheet inventory."),
         &[
             (p_pipe_sq, 100.0, 1700),
             (p_pipe_round, 60.0, 3800),
@@ -632,7 +632,9 @@ fn insert_sale(
     let invoice_id = conn.last_insert_rowid();
     for (product_id, qty, unit_price) in items {
         let unit_cost: i64 = conn.query_row(
-            "SELECT cost_price_cents FROM product_prices WHERE product_id = ?1 ORDER BY effective_from DESC, id DESC LIMIT 1",
+            "SELECT cost_price_cents FROM product_prices
+             WHERE product_id = ?1 AND status = 'active'
+             ORDER BY effective_from DESC, id DESC LIMIT 1",
             [product_id],
             |row| row.get(0),
         )?;

@@ -46,3 +46,8 @@ export type BackupRow = {
   notes?: string | null;
   created_at: string;
 };
+
+export type ClearAllDataResult = {
+  deleted_records: number;
+  message: string;
+};

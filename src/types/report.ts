@@ -4,6 +4,8 @@ import type { Product } from "./product";
 export type DashboardSummary = {
   date: string;
   today_sales_cents: number;
+  today_sales_count: number;
+  today_purchase_count: number;
   today_paid_cents: number;
   today_remaining_cents: number;
   today_profit_cents: number;

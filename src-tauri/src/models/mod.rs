@@ -159,6 +159,7 @@ pub struct SettlementPaymentRow {
     pub amount_cents: i64,
     pub currency: String,
     pub status: String,
+    pub lifecycle_status: String,
     pub payment_date: String,
     pub reference: Option<String>,
     pub notes: Option<String>,
@@ -185,13 +186,15 @@ pub struct InventoryTransactionRow {
     pub quantity_out: f64,
     pub unit_cost_cents: Option<i64>,
     pub notes: Option<String>,
+    pub status: String,
     pub created_at: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct MovementFilters {
     pub date_from: Option<String>,
     pub date_to: Option<String>,
+    pub active_only: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -306,6 +309,7 @@ pub struct InvoiceFilters {
     pub date_to: Option<String>,
     pub party_id: Option<i64>,
     pub payment_status: Option<String>,
+    pub active_only: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -370,6 +374,7 @@ pub struct ExpenseFilters {
     pub date_from: Option<String>,
     pub date_to: Option<String>,
     pub expense_category_id: Option<i64>,
+    pub active_only: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -383,6 +388,7 @@ pub struct ExpenseRow {
     pub expense_date: String,
     pub payment_method: String,
     pub notes: Option<String>,
+    pub status: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -406,6 +412,7 @@ pub struct PaymentFilters {
     pub date_to: Option<String>,
     pub party_type: Option<String>,
     pub party_id: Option<i64>,
+    pub active_only: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -422,6 +429,7 @@ pub struct PaymentRow {
     pub reference_type: Option<String>,
     pub reference_id: Option<i64>,
     pub notes: Option<String>,
+    pub status: String,
     pub created_at: String,
 }
 
@@ -464,6 +472,8 @@ pub struct CompanySettingsPayload {
 pub struct DashboardSummary {
     pub date: String,
     pub today_sales_cents: i64,
+    pub today_sales_count: i64,
+    pub today_purchase_count: i64,
     pub today_paid_cents: i64,
     pub today_remaining_cents: i64,
     pub today_profit_cents: i64,
@@ -491,6 +501,19 @@ pub struct BackupRow {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DemoSeedResult {
     pub inserted: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ClearAllDataPayload {
+    pub admin_email: String,
+    pub admin_password: String,
+    pub confirmation: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ClearAllDataResult {
+    pub deleted_records: i64,
     pub message: String,
 }
 

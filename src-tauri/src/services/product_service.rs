@@ -36,7 +36,12 @@ pub fn list_products(conn: &Connection, filters: ProductFilters) -> Result<Vec<P
                 p.thickness_mm, p.length_mm, p.unit, p.description, p.is_active,
                 COALESCE(pp.cost_price_cents, 0), COALESCE(pp.selling_price_cents, 0),
                 COALESCE(pp.wholesale_price_cents, 0),
-                COALESCE(sl.current_quantity, 0), COALESCE(sl.minimum_quantity, 0),
+                COALESCE((
+                    SELECT SUM(it.quantity_in - it.quantity_out)
+                    FROM inventory_transactions it
+                    WHERE it.product_id = p.id AND it.status = 'active'
+                ), 0),
+                COALESCE(sl.minimum_quantity, 0),
                 p.created_at, p.updated_at
          FROM products p
          JOIN categories c ON c.id = p.category_id
@@ -44,7 +49,7 @@ pub fn list_products(conn: &Connection, filters: ProductFilters) -> Result<Vec<P
          LEFT JOIN stock_levels sl ON sl.product_id = p.id
          LEFT JOIN product_prices pp ON pp.id = (
              SELECT id FROM product_prices
-             WHERE product_id = p.id
+             WHERE product_id = p.id AND status = 'active'
              ORDER BY effective_from DESC, id DESC
              LIMIT 1
          )
@@ -231,7 +236,7 @@ pub fn update_product(
         .query_row(
             "SELECT cost_price_cents, selling_price_cents, wholesale_price_cents
              FROM product_prices
-             WHERE product_id = ?1
+             WHERE product_id = ?1 AND status = 'active'
              ORDER BY effective_from DESC, id DESC
              LIMIT 1",
             [id],
@@ -317,7 +322,7 @@ pub fn latest_price(conn: &Connection, product_id: i64) -> Result<(i64, i64, i64
     conn.query_row(
         "SELECT cost_price_cents, selling_price_cents, wholesale_price_cents
          FROM product_prices
-         WHERE product_id = ?1
+         WHERE product_id = ?1 AND status = 'active'
          ORDER BY effective_from DESC, id DESC
          LIMIT 1",
         [product_id],
@@ -434,14 +439,19 @@ pub fn list_supplier_variants(
         "SELECT p.spec_key, p.id, p.sku, p.name, p.supplier_id,
                 COALESCE(s.name, 'Unknown Supplier'), c.name, p.unit, p.location,
                 COALESCE(pp.cost_price_cents, 0), COALESCE(pp.selling_price_cents, 0),
-                COALESCE(sl.current_quantity, 0), p.is_active
+                COALESCE((
+                    SELECT SUM(it.quantity_in - it.quantity_out)
+                    FROM inventory_transactions it
+                    WHERE it.product_id = p.id AND it.status = 'active'
+                ), 0),
+                p.is_active
          FROM products p
          JOIN categories c ON c.id = p.category_id
          LEFT JOIN suppliers s ON s.id = p.supplier_id
          LEFT JOIN stock_levels sl ON sl.product_id = p.id
          LEFT JOIN product_prices pp ON pp.id = (
              SELECT id FROM product_prices
-             WHERE product_id = p.id
+             WHERE product_id = p.id AND status = 'active'
              ORDER BY effective_from DESC, id DESC
              LIMIT 1
          )
@@ -454,7 +464,11 @@ pub fn list_supplier_variants(
                s.name LIKE '%' || ?1 || '%'
            ))
            AND (?2 IS NULL OR p.category_id = ?2)
-           AND (?3 = 0 OR COALESCE(sl.current_quantity, 0) > 0)
+           AND (?3 = 0 OR COALESCE((
+               SELECT SUM(it.quantity_in - it.quantity_out)
+               FROM inventory_transactions it
+               WHERE it.product_id = p.id AND it.status = 'active'
+           ), 0) > 0)
          ORDER BY p.name ASC, p.spec_key ASC,
                   COALESCE(pp.selling_price_cents, 0) ASC, s.name ASC",
     )?;

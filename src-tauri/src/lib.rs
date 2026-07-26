@@ -49,6 +49,7 @@ pub fn run() {
             list_categories,
             create_product,
             update_product,
+            cancel_stock_adjustment,
             archive_product,
             delete_product,
             get_product,
@@ -114,6 +115,7 @@ pub fn run() {
             list_settlement_payments,
             get_company_settings,
             update_company_settings,
+            clear_all_data,
             create_manual_backup,
             restore_backup,
             list_backups

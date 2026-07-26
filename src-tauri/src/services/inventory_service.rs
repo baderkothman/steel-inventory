@@ -26,16 +26,14 @@ pub fn ensure_stock_row(
 }
 
 pub fn current_stock(conn: &Connection, product_id: i64) -> Result<f64, AppError> {
-    let value = conn.query_row(
-        "SELECT current_quantity FROM stock_levels WHERE product_id = ?1",
+    conn.query_row(
+        "SELECT COALESCE(SUM(quantity_in - quantity_out), 0)
+         FROM inventory_transactions
+         WHERE product_id = ?1 AND status = 'active'",
         [product_id],
         |row| row.get(0),
-    );
-    match value {
-        Ok(quantity) => Ok(quantity),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(0.0),
-        Err(error) => Err(error.into()),
-    }
+    )
+    .map_err(Into::into)
 }
 
 pub fn update_stock(
@@ -58,6 +56,24 @@ pub fn update_stock(
         params![product_id, next, now_iso()],
     )?;
     Ok(next)
+}
+
+pub fn recalculate_stock(conn: &Connection, product_id: i64) -> Result<f64, AppError> {
+    let quantity: f64 = conn.query_row(
+        "SELECT COALESCE(SUM(quantity_in - quantity_out), 0)
+         FROM inventory_transactions
+         WHERE product_id = ?1 AND status = 'active'",
+        [product_id],
+        |row| row.get(0),
+    )?;
+    conn.execute(
+        "INSERT INTO stock_levels (product_id, current_quantity, minimum_quantity, updated_at)
+         VALUES (?1, ?2, 0, ?3)
+         ON CONFLICT(product_id) DO UPDATE
+         SET current_quantity = excluded.current_quantity, updated_at = excluded.updated_at",
+        params![product_id, quantity, now_iso()],
+    )?;
+    Ok(quantity)
 }
 
 pub fn insert_inventory_transaction(
@@ -140,6 +156,53 @@ pub fn adjust_stock(
     Ok(())
 }
 
+pub fn cancel_stock_adjustment(
+    conn: &Connection,
+    user_id: i64,
+    transaction_id: i64,
+) -> Result<(), AppError> {
+    let (product_id, reference_type, status): (i64, String, String) = conn
+        .query_row(
+            "SELECT product_id, reference_type, status
+             FROM inventory_transactions
+             WHERE id = ?1",
+            [transaction_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => {
+                AppError::not_found("Inventory transaction not found.")
+            }
+            other => other.into(),
+        })?;
+    if status == "cancelled" {
+        return Ok(());
+    }
+    if !["manual", "product"].contains(&reference_type.as_str()) {
+        return Err(AppError::validation(
+            "Invoice inventory must be cancelled from its invoice.",
+        ));
+    }
+
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "UPDATE inventory_transactions SET status = 'cancelled' WHERE id = ?1",
+        [transaction_id],
+    )?;
+    recalculate_stock(&tx, product_id)?;
+    insert_audit_log(
+        &tx,
+        user_id,
+        "cancel",
+        "inventory_transactions",
+        transaction_id,
+        None,
+        None,
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
 pub fn list_product_movement(
     conn: &Connection,
     product_id: i64,
@@ -155,17 +218,23 @@ pub fn list_product_movement(
     let mut stmt = conn.prepare(
         "SELECT it.id, it.product_id, p.name, p.sku, it.transaction_type, it.reference_type,
                 it.reference_id, it.quantity_in, it.quantity_out, it.unit_cost_cents,
-                it.notes, it.created_at
+                it.notes, it.status, it.created_at
          FROM inventory_transactions it
          JOIN products p ON p.id = it.product_id
          WHERE it.product_id = ?1
            AND (?2 IS NULL OR date(it.created_at) >= date(?2))
            AND (?3 IS NULL OR date(it.created_at) <= date(?3))
+           AND (?4 = 0 OR it.status = 'active')
          ORDER BY it.created_at DESC, it.id DESC",
     )?;
     let rows = stmt
         .query_map(
-            params![product_id, filters.date_from, filters.date_to],
+            params![
+                product_id,
+                filters.date_from,
+                filters.date_to,
+                if filters.active_only.unwrap_or(false) { 1 } else { 0 }
+            ],
             map_transaction,
         )?
         .collect::<Result<Vec<_>, _>>()?;
@@ -179,15 +248,23 @@ pub fn list_stock_movement(
     let mut stmt = conn.prepare(
         "SELECT it.id, it.product_id, p.name, p.sku, it.transaction_type, it.reference_type,
                 it.reference_id, it.quantity_in, it.quantity_out, it.unit_cost_cents,
-                it.notes, it.created_at
+                it.notes, it.status, it.created_at
          FROM inventory_transactions it
          JOIN products p ON p.id = it.product_id
          WHERE (?1 IS NULL OR date(it.created_at) >= date(?1))
            AND (?2 IS NULL OR date(it.created_at) <= date(?2))
+           AND (?3 = 0 OR it.status = 'active')
          ORDER BY it.created_at DESC, it.id DESC",
     )?;
     let rows = stmt
-        .query_map(params![filters.date_from, filters.date_to], map_transaction)?
+        .query_map(
+            params![
+                filters.date_from,
+                filters.date_to,
+                if filters.active_only.unwrap_or(false) { 1 } else { 0 }
+            ],
+            map_transaction,
+        )?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
@@ -205,6 +282,7 @@ fn map_transaction(row: &rusqlite::Row<'_>) -> rusqlite::Result<InventoryTransac
         quantity_out: row.get(8)?,
         unit_cost_cents: row.get(9)?,
         notes: row.get(10)?,
-        created_at: row.get(11)?,
+        status: row.get(11)?,
+        created_at: row.get(12)?,
     })
 }

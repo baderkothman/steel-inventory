@@ -46,7 +46,7 @@ Build artifacts produced:
 | Inventory            |   Done | Stock levels, inventory transactions, opening stock, adjustment in/out, damaged stock                                             |
 | Suppliers            |   Done | Add, edit, archive, balance, statement                                                                                            |
 | Customers            |   Done | Add, edit, archive, balance, statement, walk-in sales support                                                                     |
-| Purchases / Stock In |   Done | Purchase invoice builder, supplier selection, items, totals, paid amount, stock increase, supplier payment, cancel, print         |
+| Purchases            |   Done | Purchase invoice builder, supplier selection, items, totals, paid amount, stock increase, supplier payment, cancel, print         |
 | Sales Invoices       |   Done | Sales invoice builder, customer/walk-in selection, stock check, item snapshots, profit calculation, stock decrease, cancel, print |
 | Expenses             |   Done | Seeded expense categories, add, edit, delete, list                                                                                |
 | Payments             |   Done | Customer money-in, supplier money-out, optional invoice link, delete with linked invoice cache reversal                           |
@@ -238,7 +238,7 @@ Implemented screens:
 - Products
 - Suppliers
 - Customers
-- Purchases / Stock In
+- Purchases
 - Sales Invoices
 - Expenses
 - Payments
@@ -265,7 +265,7 @@ Implemented UX behavior:
 | ----------------------- | -----: | ------------------------------------------------------------------------------------------------------ |
 | First run / login       |   Done | First launch creates admin; later launches require login                                               |
 | Product setup           |   Done | Product can be created with generated or manual SKU, prices, initial stock, and minimum stock          |
-| Purchase / stock-in     |   Done | Saves invoice/items, increases stock, records inventory transactions, records payment if paid          |
+| Purchase                |   Done | Saves invoice/items, increases stock, records inventory transactions, records payment if paid          |
 | Sales / stock-out       |   Done | Checks stock unless negative stock enabled, saves snapshots, decreases stock, records payment if paid  |
 | Manual stock adjustment |   Done | Supports opening stock, adjustment in/out, damaged stock                                               |
 | Invoice cancel          |   Done | Reverses stock, marks invoice cancelled, removes invoice-created payment                               |

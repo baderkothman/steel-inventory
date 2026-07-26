@@ -13,7 +13,7 @@
 
 ## 1. Purpose
 
-This document defines the requirements for a desktop system that manages inventory, stock-in, sales invoices, expenses, customer credits, supplier credits, payments, profit, and reports for a company that sells steel products and equipment.
+This document defines the requirements for a desktop system that manages inventory, purchases, sales invoices, expenses, customer credits, supplier credits, payments, profit, and reports for a company that sells steel products and equipment.
 
 The system is designed for **one user only** in version 1. This user is the **admin** and has full responsibility for all operations.
 
@@ -27,7 +27,7 @@ The system will support this business flow:
 
 ```mermaid
 flowchart LR
-    A[Supplier Invoice] --> B[Stock In / Purchase]
+    A[Supplier Invoice] --> B[Purchase]
     B --> C[Inventory Increases]
     C --> D[Sales Invoice]
     D --> E[Inventory Decreases]
@@ -87,7 +87,7 @@ flowchart TD
     A --> C[Categories]
     A --> D[Suppliers]
     A --> E[Customers]
-    A --> F[Purchases / Stock In]
+    A --> F[Purchases]
     A --> G[Sales Invoices]
     A --> H[Expenses]
     A --> I[Payments]
@@ -102,7 +102,7 @@ Main modules:
 2. Products and categories
 3. Suppliers
 4. Customers
-5. Purchases / stock-in
+5. Purchases
 6. Sales invoices
 7. Expenses
 8. Payments
@@ -335,7 +335,7 @@ The system shall also support walk-in customers.
 
 ---
 
-## FR-008: Purchases / Stock In
+## FR-008: Purchases
 
 The system shall allow the admin to record supplier invoices and increase stock.
 
@@ -343,14 +343,14 @@ Workflow:
 
 ```mermaid
 flowchart TD
-    A[Open Purchases / Stock In] --> B[Select Supplier]
+    A[Open Purchases] --> B[Select Supplier]
     B --> C[Enter Invoice Number and Date]
     C --> D[Add Products]
     D --> E[Enter Quantity and Unit Cost]
     E --> F[Calculate Totals]
     F --> G[Enter Paid Amount]
     G --> H[Save Purchase Invoice]
-    H --> I[Stock Increases]
+    H --> I[Inventory Increases]
     H --> J[Supplier Balance Updates]
 ```
 
@@ -866,7 +866,7 @@ The MVP should include:
 4. Products
 5. Suppliers
 6. Customers
-7. Purchases / stock-in
+7. Purchases
 8. Sales invoices
 9. Expenses
 10. Payments

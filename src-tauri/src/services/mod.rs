@@ -1,6 +1,7 @@
 pub mod auth_service;
 pub mod backup_service;
 pub mod category_service;
+pub mod data_lifecycle_service;
 pub mod expense_service;
 pub mod inventory_service;
 pub mod party_service;

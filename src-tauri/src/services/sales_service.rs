@@ -6,7 +6,9 @@ use crate::{
         SalesInvoicePayload,
     },
     services::{
-        inventory_service::{current_stock, insert_inventory_transaction, update_stock},
+        inventory_service::{
+            current_stock, insert_inventory_transaction, recalculate_stock, update_stock,
+        },
         product_service::latest_price,
         purchase_service::{escape, invoice_html, money, next_invoice_number},
         settings_service::get_company_settings,
@@ -171,20 +173,14 @@ pub fn cancel_sales_invoice(conn: &Connection, user_id: i64, id: i64) -> Result<
     }
     let now = now_iso();
     let tx = conn.unchecked_transaction()?;
-    for item in invoice.items {
-        update_stock(&tx, item.product_id, item.quantity, true)?;
-        insert_inventory_transaction(
-            &tx,
-            item.product_id,
-            "customer_return",
-            "sales_invoice",
-            Some(id),
-            item.quantity,
-            0.0,
-            Some(item.unit_cost_cents),
-            Some(format!("Cancelled sales invoice {}", invoice.invoice.invoice_number)),
-            user_id,
-        )?;
+    tx.execute(
+        "UPDATE inventory_transactions
+         SET status = 'cancelled'
+         WHERE reference_type = 'sales_invoice' AND reference_id = ?1",
+        [id],
+    )?;
+    for item in &invoice.items {
+        recalculate_stock(&tx, item.product_id)?;
     }
     tx.execute(
         "UPDATE sales_invoices
@@ -194,7 +190,9 @@ pub fn cancel_sales_invoice(conn: &Connection, user_id: i64, id: i64) -> Result<
         params![now, id],
     )?;
     tx.execute(
-        "DELETE FROM payments WHERE reference_type = 'sales_invoice' AND reference_id = ?1",
+        "UPDATE payments
+         SET status = 'cancelled'
+         WHERE reference_type = 'sales_invoice' AND reference_id = ?1",
         [id],
     )?;
     insert_audit_log(&tx, user_id, "cancel", "sales_invoices", id, None, None)?;
@@ -217,11 +215,18 @@ pub fn list_sales_invoices(
            AND (?2 IS NULL OR date(si.invoice_date) <= date(?2))
            AND (?3 IS NULL OR si.customer_id = ?3)
            AND (?4 IS NULL OR si.payment_status = ?4)
+           AND (?5 = 0 OR si.sales_status = 'completed')
          ORDER BY si.invoice_date DESC, si.id DESC",
     )?;
     let rows = stmt
         .query_map(
-            params![filters.date_from, filters.date_to, filters.party_id, filters.payment_status],
+            params![
+                filters.date_from,
+                filters.date_to,
+                filters.party_id,
+                filters.payment_status,
+                if filters.active_only.unwrap_or(false) { 1 } else { 0 }
+            ],
             map_invoice_row,
         )?
         .collect::<Result<Vec<_>, _>>()?;

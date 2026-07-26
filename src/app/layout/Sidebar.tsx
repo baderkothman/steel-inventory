@@ -27,7 +27,7 @@ const items = [
   { to: "/categories", label: "Categories", icon: <CategoryIcon /> },
   { to: "/suppliers", label: "Suppliers", icon: <LocalShippingIcon /> },
   { to: "/customers", label: "Customers", icon: <PeopleIcon /> },
-  { to: "/purchases", label: "Purchases / Stock In", icon: <ReceiptLongIcon /> },
+  { to: "/purchases", label: "Purchases", icon: <ReceiptLongIcon /> },
   { to: "/sales", label: "Sales Invoices", icon: <PointOfSaleIcon /> },
   { to: "/expenses", label: "Expenses", icon: <PaidIcon /> },
   { to: "/payments", label: "Payments", icon: <PaymentsIcon /> },

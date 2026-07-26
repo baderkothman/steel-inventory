@@ -17,7 +17,7 @@ pub fn list_payments(conn: &Connection, filters: PaymentFilters) -> Result<Vec<P
         "SELECT p.id, p.party_type, p.party_id,
                 CASE WHEN p.party_type = 'customer' THEN c.name ELSE s.name END AS party_name,
                 p.payment_direction, p.amount_cents, p.currency, p.payment_method,
-                p.payment_date, p.reference_type, p.reference_id, p.notes, p.created_at
+                p.payment_date, p.reference_type, p.reference_id, p.notes, p.status, p.created_at
          FROM payments p
          LEFT JOIN customers c ON p.party_type = 'customer' AND c.id = p.party_id
          LEFT JOIN suppliers s ON p.party_type = 'supplier' AND s.id = p.party_id
@@ -25,6 +25,7 @@ pub fn list_payments(conn: &Connection, filters: PaymentFilters) -> Result<Vec<P
            AND (?2 IS NULL OR date(p.payment_date) <= date(?2))
            AND (?3 IS NULL OR p.party_type = ?3)
            AND (?4 IS NULL OR p.party_id = ?4)
+           AND (?5 = 0 OR p.status = 'active')
          ORDER BY p.payment_date DESC, p.id DESC",
     )?;
     let rows = stmt
@@ -33,7 +34,8 @@ pub fn list_payments(conn: &Connection, filters: PaymentFilters) -> Result<Vec<P
                 filters.date_from,
                 filters.date_to,
                 filters.party_type,
-                filters.party_id
+                filters.party_id,
+                if filters.active_only.unwrap_or(false) { 1 } else { 0 }
             ],
             map_payment,
         )?
@@ -79,13 +81,12 @@ pub fn create_payment(
         ],
     )?;
     let id = tx.last_insert_rowid();
-    sync_linked_invoice_payment(
+    recalculate_linked_invoice_payment(
         &tx,
         &payload.party_type,
         payload.party_id,
         payload.reference_type.as_deref(),
         payload.reference_id,
-        payload.amount_cents,
     )?;
     insert_audit_log(
         &tx,
@@ -102,17 +103,22 @@ pub fn create_payment(
 
 pub fn delete_payment(conn: &Connection, user_id: i64, id: i64) -> Result<(), AppError> {
     let payment = get_payment(conn, id)?;
+    if payment.status == "cancelled" {
+        return Ok(());
+    }
     let tx = conn.unchecked_transaction()?;
-    sync_linked_invoice_payment(
+    tx.execute(
+        "UPDATE payments SET status = 'cancelled' WHERE id = ?1",
+        [id],
+    )?;
+    recalculate_linked_invoice_payment(
         &tx,
         &payment.party_type,
         payment.party_id,
         payment.reference_type.as_deref(),
         payment.reference_id,
-        -payment.amount_cents,
     )?;
-    tx.execute("DELETE FROM payments WHERE id = ?1", [id])?;
-    insert_audit_log(&tx, user_id, "delete", "payments", id, None, None)?;
+    insert_audit_log(&tx, user_id, "cancel", "payments", id, None, None)?;
     tx.commit()?;
     Ok(())
 }
@@ -122,7 +128,7 @@ fn get_payment(conn: &Connection, id: i64) -> Result<PaymentRow, AppError> {
         "SELECT p.id, p.party_type, p.party_id,
                 CASE WHEN p.party_type = 'customer' THEN c.name ELSE s.name END AS party_name,
                 p.payment_direction, p.amount_cents, p.currency, p.payment_method,
-                p.payment_date, p.reference_type, p.reference_id, p.notes, p.created_at
+                p.payment_date, p.reference_type, p.reference_id, p.notes, p.status, p.created_at
          FROM payments p
          LEFT JOIN customers c ON p.party_type = 'customer' AND c.id = p.party_id
          LEFT JOIN suppliers s ON p.party_type = 'supplier' AND s.id = p.party_id
@@ -136,13 +142,12 @@ fn get_payment(conn: &Connection, id: i64) -> Result<PaymentRow, AppError> {
     })
 }
 
-fn sync_linked_invoice_payment(
+fn recalculate_linked_invoice_payment(
     conn: &Connection,
     party_type: &str,
     party_id: i64,
     reference_type: Option<&str>,
     reference_id: Option<i64>,
-    amount_delta: i64,
 ) -> Result<(), AppError> {
     let Some(reference_type) = reference_type else {
         return Ok(());
@@ -171,30 +176,40 @@ fn sync_linked_invoice_payment(
     }
 
     let sql = format!(
-        "SELECT total_cents, paid_cents
+        "SELECT total_cents
          FROM {table}
          WHERE id = ?1 AND {party_column} = ?2 AND {status_filter}"
     );
-    let (total, paid): (i64, i64) = conn
-        .query_row(&sql, params![reference_id, party_id], |row| Ok((row.get(0)?, row.get(1)?)))
+    let total: i64 = conn
+        .query_row(&sql, params![reference_id, party_id], |row| row.get(0))
         .map_err(|error| match error {
             rusqlite::Error::QueryReturnedNoRows => {
                 AppError::validation("Linked invoice does not belong to this party or is no longer active.")
             }
             other => other.into(),
         })?;
-    let next_paid = paid + amount_delta;
-    if next_paid < 0 || next_paid > total {
+    let paid: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(amount_cents), 0)
+         FROM payments
+         WHERE status = 'active'
+           AND party_type = ?1
+           AND party_id = ?2
+           AND reference_type = ?3
+           AND reference_id = ?4",
+        params![party_type, party_id, reference_type, reference_id],
+        |row| row.get(0),
+    )?;
+    if paid > total {
         return Err(AppError::validation("Payment amount does not fit the linked invoice balance."));
     }
-    let remaining = total - next_paid;
-    let status = payment_status(total, next_paid);
+    let remaining = total - paid;
+    let status = payment_status(total, paid);
     let sql = format!(
         "UPDATE {table}
          SET paid_cents = ?1, remaining_cents = ?2, payment_status = ?3, updated_at = ?4
          WHERE id = ?5"
     );
-    conn.execute(&sql, params![next_paid, remaining, status, now_iso(), reference_id])?;
+    conn.execute(&sql, params![paid, remaining, status, now_iso(), reference_id])?;
     Ok(())
 }
 
@@ -263,6 +278,7 @@ fn map_payment(row: &rusqlite::Row<'_>) -> rusqlite::Result<PaymentRow> {
         reference_type: row.get(9)?,
         reference_id: row.get(10)?,
         notes: row.get(11)?,
-        created_at: row.get(12)?,
+        status: row.get(12)?,
+        created_at: row.get(13)?,
     })
 }
