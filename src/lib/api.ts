@@ -8,7 +8,15 @@ import type {
   DateRangeFilters
 } from "../types/common";
 import type { InvoiceListRow, InvoiceSaveResult, PurchaseInvoicePayload, SalesInvoicePayload } from "../types/invoice";
-import type { ExpenseCategory, ExpensePayload, ExpenseRow, PaymentPayload, PaymentRow } from "../types/payment";
+import type {
+  ExpenseCategory,
+  ExpensePayload,
+  ExpenseRow,
+  InstallmentPaymentPayload,
+  InstallmentPaymentRow,
+  PaymentPayload,
+  PaymentRow
+} from "../types/payment";
 import type { Party, PartyPayload, StatementRow } from "../types/party";
 import type {
   InventoryTransaction,
@@ -40,6 +48,7 @@ export const categoryApi = {
   update: (id: number, payload: { name: string; parent_id?: number | null; description?: string | null }) =>
     call<Category>("update_category", { id, payload }),
   archive: (id: number) => call<void>("archive_category", { id }),
+  restore: (id: number) => call<void>("restore_category", { id }),
   delete: (id: number) => call<void>("delete_category", { id })
 };
 
@@ -49,6 +58,7 @@ export const productApi = {
   create: (payload: ProductPayload) => call<Product>("create_product", { payload }),
   update: (id: number, payload: ProductPayload) => call<Product>("update_product", { id, payload }),
   archive: (id: number) => call<void>("archive_product", { id }),
+  restore: (id: number) => call<void>("restore_product", { id }),
   delete: (id: number) => call<void>("delete_product", { id }),
   movement: (product_id: number, filters: DateRangeFilters = {}) =>
     call<InventoryTransaction[]>("get_product_movement", { product_id, filters }),
@@ -61,6 +71,10 @@ export const productApi = {
   }) => call<void>("adjust_stock", { payload }),
   cancelStockAdjustment: (transaction_id: number) =>
     call<void>("cancel_stock_adjustment", { transaction_id }),
+  restoreStockAdjustment: (transaction_id: number) =>
+    call<void>("restore_stock_adjustment", { transaction_id }),
+  permanentlyDeleteStockAdjustment: (transaction_id: number) =>
+    call<void>("permanently_delete_stock_adjustment", { transaction_id }),
   generateSku: (payload: ProductPayload) => call<string>("generate_product_sku", { payload }),
   supplierVariants: (filters: VariantFilters = {}) =>
     call<SupplierVariant[]>("list_supplier_variants", { filters })
@@ -69,7 +83,10 @@ export const productApi = {
 export const settlementApi = {
   list: (filters: SettlementFilters = {}) => call<SettlementPayment[]>("list_settlement_payments", { filters }),
   create: (payload: SettlementPaymentPayload) => call<SettlementPayment>("create_settlement_payment", { payload }),
-  cancel: (id: number) => call<void>("delete_settlement_payment", { id })
+  cancel: (id: number) => call<void>("delete_settlement_payment", { id }),
+  restore: (id: number) => call<void>("restore_settlement_payment", { id }),
+  permanentlyDelete: (id: number) =>
+    call<void>("permanently_delete_settlement_payment", { id })
 };
 
 function partyApi(kind: "supplier" | "customer") {
@@ -79,6 +96,7 @@ function partyApi(kind: "supplier" | "customer") {
     create: (payload: PartyPayload) => call<Party>(`create_${kind}`, { payload }),
     update: (id: number, payload: PartyPayload) => call<Party>(`update_${kind}`, { id, payload }),
     archive: (id: number) => call<void>(`archive_${kind}`, { id }),
+    restore: (id: number) => call<void>(`restore_${kind}`, { id }),
     delete: (id: number) => call<void>(`delete_${kind}`, { id }),
     statement: (partyId: number, filters: DateRangeFilters = {}) =>
       call<StatementRow[]>(`get_${kind}_statement`, { [`${kind}_id`]: partyId, filters })
@@ -92,6 +110,9 @@ export const purchaseApi = {
   list: (filters = {}) => call<InvoiceListRow[]>("list_purchase_invoices", { filters }),
   create: (payload: PurchaseInvoicePayload) => call<InvoiceSaveResult>("create_purchase_invoice", { payload }),
   cancel: (id: number) => call<void>("cancel_purchase_invoice", { id }),
+  restore: (id: number) => call<void>("restore_purchase_invoice", { id }),
+  permanentlyDelete: (id: number) =>
+    call<void>("permanently_delete_purchase_invoice", { id }),
   print: (id: number) => call<string>("print_purchase_invoice", { id })
 };
 
@@ -99,7 +120,20 @@ export const salesApi = {
   list: (filters = {}) => call<InvoiceListRow[]>("list_sales_invoices", { filters }),
   create: (payload: SalesInvoicePayload) => call<InvoiceSaveResult>("create_sales_invoice", { payload }),
   cancel: (id: number) => call<void>("cancel_sales_invoice", { id }),
+  restore: (id: number) => call<void>("restore_sales_invoice", { id }),
+  permanentlyDelete: (id: number) =>
+    call<void>("permanently_delete_sales_invoice", { id }),
   print: (id: number) => call<string>("print_sales_invoice", { id })
+};
+
+export const invoicePaymentApi = {
+  list: (kind: "purchase" | "sales", invoice_id: number) =>
+    call<InstallmentPaymentRow[]>("list_invoice_payments", { kind, invoice_id }),
+  create: (
+    kind: "purchase" | "sales",
+    invoice_id: number,
+    payload: InstallmentPaymentPayload
+  ) => call<InstallmentPaymentRow>("record_invoice_payment", { kind, invoice_id, payload })
 };
 
 export const expenseApi = {
@@ -107,13 +141,21 @@ export const expenseApi = {
   list: (filters = {}) => call<ExpenseRow[]>("list_expenses", { filters }),
   create: (payload: ExpensePayload) => call<ExpenseRow>("create_expense", { payload }),
   update: (id: number, payload: ExpensePayload) => call<ExpenseRow>("update_expense", { id, payload }),
-  cancel: (id: number) => call<void>("delete_expense", { id })
+  cancel: (id: number) => call<void>("delete_expense", { id }),
+  restore: (id: number) => call<void>("restore_expense", { id }),
+  permanentlyDelete: (id: number) => call<void>("permanently_delete_expense", { id }),
+  payments: (expense_id: number) =>
+    call<InstallmentPaymentRow[]>("list_expense_payments", { expense_id }),
+  recordPayment: (expense_id: number, payload: InstallmentPaymentPayload) =>
+    call<InstallmentPaymentRow>("record_expense_payment", { expense_id, payload })
 };
 
 export const paymentApi = {
   list: (filters = {}) => call<PaymentRow[]>("list_payments", { filters }),
   create: (payload: PaymentPayload) => call<PaymentRow>("create_payment", { payload }),
-  cancel: (id: number) => call<void>("delete_payment", { id })
+  cancel: (id: number) => call<void>("delete_payment", { id }),
+  restore: (id: number) => call<void>("restore_payment", { id }),
+  permanentlyDelete: (id: number) => call<void>("permanently_delete_payment", { id })
 };
 
 export const reportApi = {

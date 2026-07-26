@@ -95,7 +95,7 @@ function buildPrintDocument(
       .stock-report__summary dd{margin:3px 0 0;font-size:10px;font-weight:750;font-variant-numeric:tabular-nums}
       .stock-report__groups{display:grid;gap:14px;margin-top:16px}
       .stock-group{break-inside:avoid;page-break-inside:avoid}
-      .stock-group__heading{display:flex;align-items:end;justify-content:space-between;padding:7px 9px;background:#e8f0f1;border-left:4px solid #1f6f78}
+      .stock-group__heading{display:flex;align-items:end;justify-content:space-between;padding:7px 9px;background:#e8f0f1;border:1px solid #c9dadd}
       .stock-group__heading span{display:block;color:#557078;font-size:8px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
       .stock-group__heading h2{margin:1px 0 0;font-size:13px;line-height:1.15}
       .stock-group__heading p{margin:0;color:#52616d;font-size:9px}

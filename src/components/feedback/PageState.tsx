@@ -1,10 +1,14 @@
-import { Alert, Box, CircularProgress, Typography } from "@mui/material";
+import { Alert, Box, Skeleton, Stack, Typography } from "@mui/material";
 
 export function LoadingState({ label = "Loading" }: { label?: string }) {
   return (
-    <Box sx={{ display: "flex", alignItems: "center", gap: 1, py: 4 }}>
-      <CircularProgress size={18} />
-      <Typography color="text.secondary">{label}</Typography>
+    <Box role="status" aria-live="polite" sx={{ py: 2 }}>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>{label}</Typography>
+      <Stack spacing={1}>
+        <Skeleton variant="rounded" height={42} />
+        <Skeleton variant="rounded" height={42} />
+        <Skeleton variant="rounded" height={42} />
+      </Stack>
     </Box>
   );
 }

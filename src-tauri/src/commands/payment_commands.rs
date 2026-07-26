@@ -8,7 +8,10 @@ use crate::{
 };
 
 #[tauri::command]
-pub fn create_payment(state: State<'_, AppState>, payload: PaymentPayload) -> Result<PaymentRow, AppError> {
+pub fn create_payment(
+    state: State<'_, AppState>,
+    payload: PaymentPayload,
+) -> Result<PaymentRow, AppError> {
     let user_id = state.require_user_id()?;
     let conn = state.open_conn()?;
     payment_service::create_payment(&conn, user_id, payload)
@@ -22,7 +25,24 @@ pub fn delete_payment(state: State<'_, AppState>, id: i64) -> Result<(), AppErro
 }
 
 #[tauri::command]
-pub fn list_payments(state: State<'_, AppState>, filters: PaymentFilters) -> Result<Vec<PaymentRow>, AppError> {
+pub fn restore_payment(state: State<'_, AppState>, id: i64) -> Result<(), AppError> {
+    let user_id = state.require_user_id()?;
+    let conn = state.open_conn()?;
+    payment_service::restore_payment(&conn, user_id, id)
+}
+
+#[tauri::command]
+pub fn permanently_delete_payment(state: State<'_, AppState>, id: i64) -> Result<(), AppError> {
+    let user_id = state.require_user_id()?;
+    let conn = state.open_conn()?;
+    payment_service::permanently_delete_payment(&conn, user_id, id)
+}
+
+#[tauri::command]
+pub fn list_payments(
+    state: State<'_, AppState>,
+    filters: PaymentFilters,
+) -> Result<Vec<PaymentRow>, AppError> {
     state.require_user_id()?;
     let conn = state.open_conn()?;
     payment_service::list_payments(&conn, filters)

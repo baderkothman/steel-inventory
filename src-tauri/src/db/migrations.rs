@@ -3,11 +3,34 @@ use rusqlite::{params, Connection};
 use crate::utils::{dates::now_iso, errors::AppError};
 
 const MIGRATIONS: &[(&str, &str)] = &[
-    ("001_initial_schema", include_str!("migrations/001_initial_schema.sql")),
-    ("002_seed_data", include_str!("migrations/002_seed_data.sql")),
-    ("003_supplier_product_variants", include_str!("migrations/003_supplier_product_variants.sql")),
-    ("004_accounting_integrity", include_str!("migrations/004_accounting_integrity.sql")),
-    ("005_transaction_lifecycle", include_str!("migrations/005_transaction_lifecycle.sql")),
+    (
+        "001_initial_schema",
+        include_str!("migrations/001_initial_schema.sql"),
+    ),
+    (
+        "002_seed_data",
+        include_str!("migrations/002_seed_data.sql"),
+    ),
+    (
+        "003_supplier_product_variants",
+        include_str!("migrations/003_supplier_product_variants.sql"),
+    ),
+    (
+        "004_accounting_integrity",
+        include_str!("migrations/004_accounting_integrity.sql"),
+    ),
+    (
+        "005_transaction_lifecycle",
+        include_str!("migrations/005_transaction_lifecycle.sql"),
+    ),
+    (
+        "006_recently_deleted",
+        include_str!("migrations/006_recently_deleted.sql"),
+    ),
+    (
+        "007_installment_payments",
+        include_str!("migrations/007_installment_payments.sql"),
+    ),
 ];
 
 pub fn run_migrations(conn: &mut Connection) -> Result<(), AppError> {

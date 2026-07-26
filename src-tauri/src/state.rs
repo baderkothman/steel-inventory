@@ -3,6 +3,7 @@ use std::{
     sync::Mutex,
 };
 
+use chrono::{DateTime, Duration, Utc};
 use directories::ProjectDirs;
 use rusqlite::Connection;
 
@@ -15,7 +16,10 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct Session {
     pub user: AdminUser,
+    pub expires_at: DateTime<Utc>,
 }
+
+const SESSION_DURATION_HOURS: i64 = 8;
 
 pub struct AppState {
     pub db_path: PathBuf,
@@ -46,7 +50,10 @@ impl AppState {
             .session
             .lock()
             .map_err(|_| AppError::database("Could not lock session state."))?;
-        *session = Some(Session { user });
+        *session = Some(Session {
+            user,
+            expires_at: Utc::now() + Duration::hours(SESSION_DURATION_HOURS),
+        });
         Ok(())
     }
 
@@ -60,10 +67,16 @@ impl AppState {
     }
 
     pub fn current_user(&self) -> Result<Option<AdminUser>, AppError> {
-        let session = self
+        let mut session = self
             .session
             .lock()
             .map_err(|_| AppError::database("Could not lock session state."))?;
+        if session
+            .as_ref()
+            .is_some_and(|active| active.expires_at <= Utc::now())
+        {
+            *session = None;
+        }
         Ok(session.as_ref().map(|s| s.user.clone()))
     }
 

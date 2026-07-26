@@ -25,7 +25,12 @@ pub fn create_purchase_invoice(
 ) -> Result<InvoiceSaveResult, AppError> {
     validate_purchase_payload(&payload)?;
     let settings = get_company_settings(conn)?;
-    let invoice_number = match payload.invoice_number.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
+    let invoice_number = match payload
+        .invoice_number
+        .as_ref()
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+    {
         Some(value) => value.to_uppercase(),
         None => next_invoice_number(conn, "purchase_invoices", &settings.invoice_prefix_purchase)?,
     };
@@ -43,7 +48,9 @@ pub fn create_purchase_invoice(
         payload.shipping_cents,
     )?;
     if payload.paid_cents > total {
-        return Err(AppError::validation("Paid amount cannot exceed invoice total."));
+        return Err(AppError::validation(
+            "Paid amount cannot exceed invoice total.",
+        ));
     }
     let remaining = total - payload.paid_cents;
     let status = payment_status(total, payload.paid_cents);
@@ -151,9 +158,9 @@ pub fn cancel_purchase_invoice(conn: &Connection, user_id: i64, id: i64) -> Resu
     let tx = conn.unchecked_transaction()?;
     tx.execute(
         "UPDATE inventory_transactions
-         SET status = 'cancelled'
-         WHERE reference_type = 'purchase_invoice' AND reference_id = ?1",
-        [id],
+         SET status = 'cancelled', deleted_at = ?1
+         WHERE reference_type = 'purchase_invoice' AND reference_id = ?2",
+        params![now, id],
     )?;
     for item in &invoice.items {
         recalculate_stock(&tx, item.product_id)?;
@@ -167,17 +174,110 @@ pub fn cancel_purchase_invoice(conn: &Connection, user_id: i64, id: i64) -> Resu
     tx.execute(
         "UPDATE purchase_invoices
          SET status = 'cancelled', payment_status = 'unpaid', paid_cents = 0,
-             remaining_cents = total_cents, updated_at = ?1
+             remaining_cents = total_cents, updated_at = ?1, deleted_at = ?1
          WHERE id = ?2",
         params![now, id],
     )?;
     tx.execute(
         "UPDATE payments
-         SET status = 'cancelled'
+         SET status = 'cancelled', deleted_at = ?1, cancelled_by_invoice = 1
+         WHERE reference_type = 'purchase_invoice' AND reference_id = ?2
+           AND status = 'active'",
+        params![now, id],
+    )?;
+    insert_audit_log(&tx, user_id, "cancel", "purchase_invoices", id, None, None)?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub fn restore_purchase_invoice(conn: &Connection, user_id: i64, id: i64) -> Result<(), AppError> {
+    let invoice = get_purchase_invoice(conn, id)?;
+    if invoice.invoice.status != "cancelled" {
+        return Ok(());
+    }
+    let now = now_iso();
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "UPDATE inventory_transactions
+         SET status = 'active', deleted_at = NULL
          WHERE reference_type = 'purchase_invoice' AND reference_id = ?1",
         [id],
     )?;
-    insert_audit_log(&tx, user_id, "cancel", "purchase_invoices", id, None, None)?;
+    for item in &invoice.items {
+        recalculate_stock(&tx, item.product_id)?;
+    }
+    tx.execute(
+        "UPDATE product_prices
+         SET status = 'active'
+         WHERE reference_type = 'purchase_invoice' AND reference_id = ?1",
+        [id],
+    )?;
+    tx.execute(
+        "UPDATE payments
+         SET status = 'active', deleted_at = NULL, cancelled_by_invoice = 0
+         WHERE reference_type = 'purchase_invoice' AND reference_id = ?1
+           AND cancelled_by_invoice = 1",
+        [id],
+    )?;
+    let paid_cents: i64 = tx.query_row(
+        "SELECT COALESCE(SUM(amount_cents), 0)
+         FROM payments
+         WHERE reference_type = 'purchase_invoice' AND reference_id = ?1
+           AND status = 'active'",
+        [id],
+        |row| row.get(0),
+    )?;
+    tx.execute(
+        "UPDATE purchase_invoices
+         SET status = 'active', paid_cents = ?1,
+             remaining_cents = MAX(total_cents - ?1, 0),
+             payment_status = CASE
+               WHEN ?1 <= 0 THEN 'unpaid'
+               WHEN ?1 >= total_cents THEN 'paid'
+               ELSE 'partial'
+             END,
+             updated_at = ?2, deleted_at = NULL
+         WHERE id = ?3",
+        params![paid_cents, now, id],
+    )?;
+    insert_audit_log(&tx, user_id, "restore", "purchase_invoices", id, None, None)?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub fn permanently_delete_purchase_invoice(
+    conn: &Connection,
+    user_id: i64,
+    id: i64,
+) -> Result<(), AppError> {
+    let invoice = get_purchase_invoice(conn, id)?;
+    if invoice.invoice.status != "cancelled" {
+        return Err(AppError::validation(
+            "Only a cancelled purchase can be permanently deleted.",
+        ));
+    }
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "DELETE FROM payments
+         WHERE reference_type = 'purchase_invoice' AND reference_id = ?1",
+        [id],
+    )?;
+    tx.execute(
+        "DELETE FROM inventory_transactions
+         WHERE reference_type = 'purchase_invoice' AND reference_id = ?1",
+        [id],
+    )?;
+    tx.execute(
+        "DELETE FROM product_prices
+         WHERE reference_type = 'purchase_invoice' AND reference_id = ?1",
+        [id],
+    )?;
+    tx.execute(
+        "DELETE FROM purchase_invoice_items WHERE purchase_invoice_id = ?1",
+        [id],
+    )?;
+    tx.execute("DELETE FROM purchase_invoices WHERE id = ?1", [id])?;
+    insert_audit_log(&tx, user_id, "delete", "purchase_invoices", id, None, None)?;
     tx.commit()?;
     Ok(())
 }
@@ -187,10 +287,10 @@ pub fn list_purchase_invoices(
     filters: InvoiceFilters,
 ) -> Result<Vec<InvoiceListRow>, AppError> {
     let mut stmt = conn.prepare(
-        "SELECT pi.id, pi.invoice_number, pi.invoice_date, s.name,
+        "SELECT pi.id, pi.supplier_id, pi.invoice_number, pi.invoice_date, s.name,
                 pi.subtotal_cents, pi.discount_cents, pi.tax_cents, pi.shipping_cents,
                 pi.total_cents, pi.paid_cents, pi.remaining_cents, pi.payment_status,
-                pi.status, pi.notes, pi.created_at
+                pi.status, pi.notes, pi.created_at, pi.deleted_at
          FROM purchase_invoices pi
          JOIN suppliers s ON s.id = pi.supplier_id
          WHERE (?1 IS NULL OR date(pi.invoice_date) >= date(?1))
@@ -207,7 +307,11 @@ pub fn list_purchase_invoices(
                 filters.date_to,
                 filters.party_id,
                 filters.payment_status,
-                if filters.active_only.unwrap_or(false) { 1 } else { 0 }
+                if filters.active_only.unwrap_or(false) {
+                    1
+                } else {
+                    0
+                }
             ],
             map_invoice_row,
         )?
@@ -218,10 +322,10 @@ pub fn list_purchase_invoices(
 pub fn get_purchase_invoice(conn: &Connection, id: i64) -> Result<InvoiceDetail, AppError> {
     let invoice = conn
         .query_row(
-            "SELECT pi.id, pi.invoice_number, pi.invoice_date, s.name,
+            "SELECT pi.id, pi.supplier_id, pi.invoice_number, pi.invoice_date, s.name,
                     pi.subtotal_cents, pi.discount_cents, pi.tax_cents, pi.shipping_cents,
                     pi.total_cents, pi.paid_cents, pi.remaining_cents, pi.payment_status,
-                    pi.status, pi.notes, pi.created_at
+                    pi.status, pi.notes, pi.created_at, pi.deleted_at
              FROM purchase_invoices pi
              JOIN suppliers s ON s.id = pi.supplier_id
              WHERE pi.id = ?1",
@@ -229,7 +333,9 @@ pub fn get_purchase_invoice(conn: &Connection, id: i64) -> Result<InvoiceDetail,
             map_invoice_row,
         )
         .map_err(|error| match error {
-            rusqlite::Error::QueryReturnedNoRows => AppError::not_found("Purchase invoice not found."),
+            rusqlite::Error::QueryReturnedNoRows => {
+                AppError::not_found("Purchase invoice not found.")
+            }
             other => other.into(),
         })?;
     let mut stmt = conn.prepare(
@@ -287,7 +393,9 @@ pub fn purchase_invoice_html(conn: &Connection, id: i64) -> Result<String, AppEr
 fn validate_purchase_payload(payload: &PurchaseInvoicePayload) -> Result<(), AppError> {
     validate_date(&payload.invoice_date, "Invoice date")?;
     if payload.items.is_empty() {
-        return Err(AppError::validation("At least one invoice item is required."));
+        return Err(AppError::validation(
+            "At least one invoice item is required.",
+        ));
     }
     non_negative_i64(payload.discount_cents, "Discount")?;
     non_negative_i64(payload.tax_cents, "Tax")?;
@@ -313,7 +421,11 @@ fn ensure_unique_purchase_number(conn: &Connection, invoice_number: &str) -> Res
     }
 }
 
-pub fn next_invoice_number(conn: &Connection, table: &str, prefix: &str) -> Result<String, AppError> {
+pub fn next_invoice_number(
+    conn: &Connection,
+    table: &str,
+    prefix: &str,
+) -> Result<String, AppError> {
     let allowed = ["purchase_invoices", "sales_invoices"];
     if !allowed.contains(&table) {
         return Err(AppError::database("Invalid invoice table."));
@@ -365,20 +477,22 @@ fn update_latest_cost_price(
 fn map_invoice_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<InvoiceListRow> {
     Ok(InvoiceListRow {
         id: row.get(0)?,
-        invoice_number: row.get(1)?,
-        invoice_date: row.get(2)?,
-        party_name: row.get(3)?,
-        subtotal_cents: row.get(4)?,
-        discount_cents: row.get(5)?,
-        tax_cents: row.get(6)?,
-        extra_cents: row.get(7)?,
-        total_cents: row.get(8)?,
-        paid_cents: row.get(9)?,
-        remaining_cents: row.get(10)?,
-        payment_status: row.get(11)?,
-        status: row.get(12)?,
-        notes: row.get(13)?,
-        created_at: row.get(14)?,
+        party_id: row.get(1)?,
+        invoice_number: row.get(2)?,
+        invoice_date: row.get(3)?,
+        party_name: row.get(4)?,
+        subtotal_cents: row.get(5)?,
+        discount_cents: row.get(6)?,
+        tax_cents: row.get(7)?,
+        extra_cents: row.get(8)?,
+        total_cents: row.get(9)?,
+        paid_cents: row.get(10)?,
+        remaining_cents: row.get(11)?,
+        payment_status: row.get(12)?,
+        status: row.get(13)?,
+        notes: row.get(14)?,
+        created_at: row.get(15)?,
+        deleted_at: row.get(16)?,
     })
 }
 
@@ -419,8 +533,8 @@ pub fn invoice_html(
         r#"<!doctype html>
 <html><head><meta charset="utf-8"><title>{title} {invoice_number}</title>
 <style>
-body{{font-family:Arial,sans-serif;color:#16202a;margin:32px}} .header{{display:flex;justify-content:space-between;border-bottom:2px solid #16202a;padding-bottom:16px;margin-bottom:24px}}
-h1{{margin:0;font-size:24px}} .muted{{color:#5b6773;font-size:13px}} table{{width:100%;border-collapse:collapse;margin-top:20px}} th,td{{border-bottom:1px solid #d9e0e7;padding:10px;text-align:left}} th{{background:#f3f6f8}} .totals{{margin-left:auto;width:320px;margin-top:20px}} .totals div{{display:flex;justify-content:space-between;padding:6px 0}} .total{{font-weight:700;border-top:2px solid #16202a}} @media print{{button{{display:none}} body{{margin:12mm}}}}
+*{{box-sizing:border-box}} body{{font-family:Inter,"Segoe UI",Arial,sans-serif;color:#16202a;margin:14mm 12mm 16mm;font-size:12px}} .header{{display:flex;justify-content:space-between;gap:24px;border-bottom:2px solid #245a61;padding-bottom:16px;margin-bottom:24px}}
+h1{{margin:0;font-size:23px;letter-spacing:-.02em}} .muted{{color:#5b6773;font-size:12px;margin-top:3px}} table{{width:100%;border-collapse:collapse;margin-top:20px}} thead{{display:table-header-group}} tr{{break-inside:avoid;page-break-inside:avoid}} th,td{{border-bottom:1px solid #d9e0e7;padding:9px 10px;text-align:left;vertical-align:top}} th{{background:#e9f0f1;color:#20383c;font-weight:700}} tbody tr:nth-child(even){{background:#f8fafb}} .totals{{margin-left:auto;width:320px;margin-top:20px;break-inside:avoid}} .totals div{{display:flex;justify-content:space-between;padding:6px 0}} .total{{font-weight:700;border-top:2px solid #245a61}} .page-footer{{display:none}} @page{{size:auto;margin:14mm 12mm 16mm}} @media print{{button{{display:none}} body{{margin:0}} .page-footer{{display:block;position:fixed;left:0;right:0;bottom:-7mm;color:#687680;font-size:9px}} .page-number{{float:right}} .page-number:after{{content:counter(page)}}}}
 </style></head>
 <body>
 <button onclick="window.print()">Print / Save PDF</button>
@@ -429,6 +543,7 @@ h1{{margin:0;font-size:24px}} .muted{{color:#5b6773;font-size:13px}} table{{widt
 <table><thead><tr><th>SKU</th><th>Product</th><th>Quantity</th><th>Unit Price</th><th>Total</th></tr></thead><tbody>{rows}</tbody></table>
 <div class="totals"><div><span>Subtotal</span><span>{subtotal}</span></div><div><span>Discount</span><span>{discount}</span></div><div><span>Tax</span><span>{tax}</span></div><div><span>{extra_label}</span><span>{extra}</span></div><div class="total"><span>Total</span><span>{total}</span></div><div><span>Paid</span><span>{paid}</span></div><div><span>Remaining</span><span>{remaining}</span></div></div>
 <p><strong>Notes:</strong> {notes}</p>
+<div class="page-footer"><span>{company}</span><span class="page-number">Page </span></div>
 </body></html>"#,
         title = escape(title),
         invoice_number = escape(invoice_number),

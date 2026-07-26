@@ -49,6 +49,13 @@ pub fn archive_product(state: State<'_, AppState>, id: i64) -> Result<(), AppErr
 }
 
 #[tauri::command]
+pub fn restore_product(state: State<'_, AppState>, id: i64) -> Result<(), AppError> {
+    let user_id = state.require_user_id()?;
+    let conn = state.open_conn()?;
+    product_service::restore_product(&conn, user_id, id)
+}
+
+#[tauri::command]
 pub fn delete_product(state: State<'_, AppState>, id: i64) -> Result<(), AppError> {
     let user_id = state.require_user_id()?;
     let conn = state.open_conn()?;
@@ -113,4 +120,24 @@ pub fn cancel_stock_adjustment(
     let user_id = state.require_user_id()?;
     let conn = state.open_conn()?;
     inventory_service::cancel_stock_adjustment(&conn, user_id, transaction_id)
+}
+
+#[tauri::command]
+pub fn restore_stock_adjustment(
+    state: State<'_, AppState>,
+    transaction_id: i64,
+) -> Result<(), AppError> {
+    let user_id = state.require_user_id()?;
+    let conn = state.open_conn()?;
+    inventory_service::restore_stock_adjustment(&conn, user_id, transaction_id)
+}
+
+#[tauri::command]
+pub fn permanently_delete_stock_adjustment(
+    state: State<'_, AppState>,
+    transaction_id: i64,
+) -> Result<(), AppError> {
+    let user_id = state.require_user_id()?;
+    let conn = state.open_conn()?;
+    inventory_service::permanently_delete_stock_adjustment(&conn, user_id, transaction_id)
 }

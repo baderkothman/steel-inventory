@@ -12,18 +12,10 @@ import {
   MenuItem,
   Paper,
   Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableFooter,
-  TableHead,
-  TableRow,
   TextField,
   Typography
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
-import ArchiveIcon from "@mui/icons-material/Archive";
-import CancelIcon from "@mui/icons-material/Cancel";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
 import HistoryIcon from "@mui/icons-material/History";
@@ -33,13 +25,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MoneyText } from "../../components/MoneyText";
 import { PageHeader } from "../../components/PageHeader";
 import { ConfirmDialog } from "../../components/feedback/ConfirmDialog";
-import { EmptyState, LoadingState } from "../../components/feedback/PageState";
-import { PrintButton } from "../../components/print/PrintButton";
-import { categoryApi, productApi, supplierApi } from "../../lib/api";
+import { LoadingState } from "../../components/feedback/PageState";
+import { EnterpriseTable, type TableColumn } from "../../components/table/EnterpriseTable";
+import { StatusBadge } from "../../components/table/StatusBadge";
+import { categoryApi, productApi, settingsApi, supplierApi } from "../../lib/api";
 import { finishes, materials, productTypes, shapes, units } from "../../lib/constants";
-import { fromCents, quantity, toCents } from "../../lib/formatters";
+import { fromCents, money, quantity, toCents } from "../../lib/formatters";
 import { normalizeError } from "../../lib/tauri";
-import type { Product, ProductPayload } from "../../types/product";
+import type { InventoryTransaction, Product, ProductPayload } from "../../types/product";
 
 type ProductForm = Omit<ProductPayload, "cost_price_cents" | "selling_price_cents" | "wholesale_price_cents"> & {
   id?: number;
@@ -75,11 +68,9 @@ const blankProduct: ProductForm = {
 
 export function ProductsPage() {
   const queryClient = useQueryClient();
-  const [search, setSearch] = useState("");
   const [categoryId, setCategoryId] = useState<number | "">("");
   const [supplierId, setSupplierId] = useState<number | "">("");
   const [form, setForm] = useState<ProductForm | null>(null);
-  const [archiveId, setArchiveId] = useState<number | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [movementProduct, setMovementProduct] = useState<Product | null>(null);
@@ -88,18 +79,29 @@ export function ProductsPage() {
 
   const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: categoryApi.list });
   const { data: suppliers = [] } = useQuery({ queryKey: ["suppliers"], queryFn: () => supplierApi.list({ active_only: true }) });
+  const { data: settings } = useQuery({ queryKey: ["settings"], queryFn: settingsApi.get });
   const { data: products = [], isLoading } = useQuery({
-    queryKey: ["products", search, categoryId, supplierId],
+    queryKey: ["products", categoryId, supplierId],
     queryFn: () =>
       productApi.list({
-        search: search || null,
         category_id: categoryId || null,
         supplier_id: supplierId || null,
-        active_only: false
+        active_only: true
       })
   });
 
   const activeCategories = useMemo(() => categories.filter((category) => category.is_active), [categories]);
+  const activeProducts = useMemo(() => products.filter((product) => product.is_active), [products]);
+  const columns = useMemo<TableColumn<Product>[]>(() => [
+    { id: "sku", label: "SKU", value: (row) => row.sku, minWidth: 140 },
+    { id: "product", label: "Product", value: (row) => row.name, minWidth: 190 },
+    { id: "supplier", label: "Supplier", value: (row) => row.supplier_name, minWidth: 160 },
+    { id: "size", label: "Size", value: (row) => row.size_label || "—", minWidth: 100 },
+    { id: "thickness", label: "Thickness", value: (row) => row.thickness_mm ? `${quantity(row.thickness_mm)} mm` : "—", minWidth: 100 },
+    { id: "stock", label: "Stock remaining", value: (row) => quantity(row.current_quantity), align: "right", minWidth: 130 },
+    { id: "unit_cost", label: "Unit cost", value: (row) => money(row.cost_price_cents, settings?.default_currency), render: (row) => <MoneyText value={row.cost_price_cents} currency={settings?.default_currency} />, align: "right", minWidth: 120 },
+    { id: "total_cost", label: "Total cost", value: (row) => money(Math.round(row.current_quantity * row.cost_price_cents), settings?.default_currency), render: (row) => <MoneyText value={Math.round(row.current_quantity * row.cost_price_cents)} currency={settings?.default_currency} />, align: "right", minWidth: 120 }
+  ], [settings?.default_currency]);
 
   const saveMutation = useMutation({
     mutationFn: (value: ProductForm) => {
@@ -115,16 +117,8 @@ export function ProductsPage() {
     onError: (err) => setError(normalizeError(err).message)
   });
 
-  const archiveMutation = useMutation({
-    mutationFn: (id: number) => productApi.archive(id),
-    onSuccess: async () => {
-      setArchiveId(null);
-      await queryClient.invalidateQueries({ queryKey: ["products"] });
-    }
-  });
-
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => productApi.delete(id),
+    mutationFn: (id: number) => productApi.archive(id),
     onSuccess: async () => {
       setDeleteId(null);
       setDeleteError(null);
@@ -155,22 +149,19 @@ export function ProductsPage() {
         title="Products"
         description="Manage SKUs, steel dimensions, prices, stock levels, and movement history."
         actions={
-          <Stack direction="row" spacing={1}>
-            <PrintButton targetId="products-print" title="Product Stock & Cost" subtitle={`${products.length} products`} disabled={!products.length} />
-            <Button
-              startIcon={<AddIcon />}
-              variant="contained"
-              onClick={() => setForm({ ...blankProduct, category_id: activeCategories[0]?.id ?? 0 })}
-            >
-              Add product
-            </Button>
-          </Stack>
+          <Button
+            startIcon={<AddIcon />}
+            variant="contained"
+            onClick={() => setForm({ ...blankProduct, category_id: activeCategories[0]?.id ?? 0 })}
+          >
+            Add product
+          </Button>
         }
       />
+      {deleteError && deleteId === null ? <Alert severity="error">{deleteError}</Alert> : null}
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
-          <TextField label="Search" value={search} onChange={(event) => setSearch(event.target.value)} sx={{ minWidth: 260 }} />
           <TextField
             select
             label="Category"
@@ -202,65 +193,26 @@ export function ProductsPage() {
         </Stack>
       </Paper>
 
-      <Paper id="products-print" variant="outlined">
-        {products.length === 0 ? (
-          <EmptyState label="No products found." />
-        ) : (
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>SKU</TableCell>
-                <TableCell>Product</TableCell>
-                <TableCell>Supplier</TableCell>
-                <TableCell>Size</TableCell>
-                <TableCell>Thickness</TableCell>
-                <TableCell align="right">Stock remaining</TableCell>
-                <TableCell align="right">Unit cost</TableCell>
-                <TableCell align="right">Total cost</TableCell>
-                <TableCell>Status</TableCell>
-                <TableCell className="print-exclude" align="right">Actions</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {products.map((product) => (
-                <TableRow key={product.id} hover>
-                  <TableCell>{product.sku}</TableCell>
-                  <TableCell>{product.name}</TableCell>
-                  <TableCell>{product.supplier_name}</TableCell>
-                  <TableCell>{product.size_label || "—"}</TableCell>
-                  <TableCell>{product.thickness_mm ? `${quantity(product.thickness_mm)} mm` : "—"}</TableCell>
-                  <TableCell align="right">{quantity(product.current_quantity)}</TableCell>
-                  <TableCell align="right"><MoneyText value={product.cost_price_cents} /></TableCell>
-                  <TableCell align="right"><MoneyText value={Math.round(product.current_quantity * product.cost_price_cents)} /></TableCell>
-                  <TableCell>{product.is_active ? "Active" : "Archived"}</TableCell>
-                  <TableCell className="print-exclude" align="right">
-                    <Button size="small" startIcon={<EditIcon />} onClick={() => setForm(productToForm(product))}>Edit</Button>
-                    <Button size="small" startIcon={<TuneIcon />} onClick={() => setAdjustProduct(product)}>Adjust</Button>
-                    <Button size="small" startIcon={<HistoryIcon />} onClick={() => setMovementProduct(product)}>Movement</Button>
-                    <Button size="small" color="warning" startIcon={<ArchiveIcon />} disabled={!product.is_active} onClick={() => setArchiveId(product.id)}>Archive</Button>
-                    <Button size="small" color="error" startIcon={<DeleteIcon />} onClick={() => {
-                      setDeleteError(null);
-                      setDeleteId(product.id);
-                    }}>Delete</Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-            <TableFooter>
-              <TableRow>
-                <TableCell colSpan={7} align="right" sx={{ fontWeight: 700 }}>
-                  Total inventory cost
-                </TableCell>
-                <TableCell align="right" sx={{ fontWeight: 700 }}>
-                  <MoneyText value={products.reduce((total, product) => total + Math.round(product.current_quantity * product.cost_price_cents), 0)} />
-                </TableCell>
-                <TableCell />
-                <TableCell className="print-exclude" />
-              </TableRow>
-            </TableFooter>
-          </Table>
-        )}
-      </Paper>
+      <EnterpriseTable
+        title="Product Stock & Cost"
+        rows={activeProducts}
+        columns={columns}
+        rowId={(row) => row.id}
+        loading={isLoading}
+        emptyTitle="No active products"
+        emptyDescription="Add a product to begin tracking stock and pricing."
+        toolbarExtras={
+          <Typography variant="body2" color="text.secondary" whiteSpace="nowrap">
+            Inventory cost: <MoneyText currency={settings?.default_currency} value={activeProducts.reduce((total, product) => total + Math.round(product.current_quantity * product.cost_price_cents), 0)} />
+          </Typography>
+        }
+        actions={(row) => [
+          { label: "Edit", icon: <EditIcon fontSize="small" />, onClick: () => setForm(productToForm(row)) },
+          { label: "Adjust stock", icon: <TuneIcon fontSize="small" />, onClick: () => setAdjustProduct(row) },
+          { label: "View movement", icon: <HistoryIcon fontSize="small" />, onClick: () => setMovementProduct(row) },
+          { label: "Delete", icon: <DeleteIcon fontSize="small" />, destructive: true, onClick: () => setDeleteId(row.id) }
+        ]}
+      />
 
       <ProductDialog
         form={form}
@@ -275,25 +227,17 @@ export function ProductsPage() {
       <MovementDrawer product={movementProduct} onClose={() => setMovementProduct(null)} />
       <StockAdjustDialog product={adjustProduct} onClose={() => setAdjustProduct(null)} />
       <ConfirmDialog
-        open={archiveId !== null}
-        title="Archive product"
-        message="Archived products stay in invoice history but are hidden from active workflows."
-        confirmLabel="Archive"
-        onClose={() => setArchiveId(null)}
-        onConfirm={() => archiveId && archiveMutation.mutate(archiveId)}
-      />
-      <ConfirmDialog
         open={deleteId !== null}
-        title="Permanently delete product"
-        message="This permanently removes the product, its stock level, price history, and manual movements. Products used on invoices cannot be deleted."
-        confirmLabel="Delete permanently"
+        title="Delete product"
+        message="This removes the product from active lists while preserving its invoice and stock history."
+        confirmLabel="Delete"
         error={deleteError}
         loading={deleteMutation.isPending}
         onClose={() => {
           setDeleteId(null);
           setDeleteError(null);
         }}
-        onConfirm={() => deleteId && deleteMutation.mutate(deleteId)}
+        onConfirm={() => deleteId !== null && deleteMutation.mutate(deleteId)}
       />
     </Stack>
   );
@@ -395,26 +339,49 @@ function MovementDrawer({ product, onClose }: { product: Product | null; onClose
     },
     onError: (error) => setCancelError(normalizeError(error).message)
   });
+  const activeRows = useMemo(() => data.filter((row) => row.status === "active"), [data]);
+  const columns = useMemo<TableColumn<InventoryTransaction>[]>(() => [
+    { id: "date", label: "Date", value: (row) => row.created_at.slice(0, 10), width: 110 },
+    { id: "type", label: "Type", value: (row) => row.transaction_type.replace(/_/g, " "), minWidth: 140 },
+    { id: "in", label: "In", value: (row) => quantity(row.quantity_in), align: "right", width: 90 },
+    { id: "out", label: "Out", value: (row) => quantity(row.quantity_out), align: "right", width: 90 },
+    { id: "status", label: "Status", value: (row) => row.status, render: (row) => <StatusBadge value={row.status} />, width: 110 },
+    { id: "notes", label: "Notes", value: (row) => row.notes ?? "", minWidth: 180 }
+  ], []);
 
   return (
     <Drawer anchor="right" open={Boolean(product)} onClose={onClose}>
-      <Box sx={{ width: 620, p: 3 }}>
+      <Box sx={{ width: { xs: "100vw", lg: 900 }, maxWidth: "100vw", p: { xs: 2, md: 3 } }}>
         <PageHeader
           title="Stock movement"
           description={product?.name}
-          actions={<PrintButton targetId="movement-print" title="Stock Movement" subtitle={product?.name} disabled={!data.length} />}
         />
-        {isLoading ? <LoadingState /> : data.length === 0 ? <EmptyState label="No movement recorded." /> : (
-          <Table id="movement-print" size="small">
-            <TableHead><TableRow><TableCell>Date</TableCell><TableCell>Type</TableCell><TableCell align="right">In</TableCell><TableCell align="right">Out</TableCell><TableCell>Status</TableCell><TableCell>Notes</TableCell><TableCell className="print-exclude" align="right">Actions</TableCell></TableRow></TableHead>
-            <TableBody>{data.map((row) => <TableRow key={row.id}><TableCell>{row.created_at.slice(0, 10)}</TableCell><TableCell>{row.transaction_type}</TableCell><TableCell align="right">{quantity(row.quantity_in)}</TableCell><TableCell align="right">{quantity(row.quantity_out)}</TableCell><TableCell>{row.status}</TableCell><TableCell>{row.notes}</TableCell><TableCell className="print-exclude" align="right"><Button size="small" color="error" startIcon={<CancelIcon />} disabled={row.status === "cancelled" || !["manual", "product"].includes(row.reference_type)} onClick={() => { setCancelError(null); setCancelId(row.id); }}>Cancel</Button></TableCell></TableRow>)}</TableBody>
-          </Table>
-        )}
+        {cancelError && cancelId === null ? <Alert severity="error" sx={{ mt: 2 }}>{cancelError}</Alert> : null}
+        <Stack spacing={2} sx={{ mt: 2 }}>
+          <EnterpriseTable
+            title={`Stock Movement — ${product?.name ?? ""}`}
+            rows={activeRows}
+            columns={columns}
+            rowId={(row) => row.id}
+            loading={isLoading}
+            emptyTitle="No active stock movement"
+            emptyDescription="Purchases, sales, and adjustments will appear here."
+            actions={(row) => [
+              {
+                label: "Delete adjustment",
+                icon: <DeleteIcon fontSize="small" />,
+                destructive: true,
+                disabled: !["manual", "product"].includes(row.reference_type),
+                onClick: () => { setCancelError(null); setCancelId(row.id); }
+              }
+            ]}
+          />
+        </Stack>
         <ConfirmDialog
           open={cancelId !== null}
-          title="Cancel inventory adjustment"
+          title="Delete inventory adjustment"
           message="The movement remains in history, but its stock effect is removed immediately."
-          confirmLabel="Cancel adjustment"
+          confirmLabel="Delete"
           error={cancelError}
           loading={cancelMutation.isPending}
           onClose={() => setCancelId(null)}

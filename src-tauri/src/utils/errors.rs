@@ -57,7 +57,9 @@ impl AppError {
 impl From<rusqlite::Error> for AppError {
     fn from(value: rusqlite::Error) -> Self {
         match value {
-            rusqlite::Error::SqliteFailure(err, _) if err.code == rusqlite::ErrorCode::ConstraintViolation => {
+            rusqlite::Error::SqliteFailure(err, _)
+                if err.code == rusqlite::ErrorCode::ConstraintViolation =>
+            {
                 AppError::validation("A database constraint was violated.")
             }
             other => AppError::database(other.to_string()),

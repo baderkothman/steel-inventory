@@ -6,18 +6,15 @@ use rusqlite::{params, Connection};
 
 use crate::{
     models::{AdminUser, ChangePasswordPayload, LoginPayload, SetupAdminPayload},
-    utils::{
-        audit::insert_audit_log,
-        dates::now_iso,
-        errors::AppError,
-        validation::{required},
-    },
+    utils::{audit::insert_audit_log, dates::now_iso, errors::AppError, validation::required},
 };
 
 pub fn has_admin(conn: &Connection) -> Result<bool, AppError> {
-    let count: i64 = conn.query_row("SELECT COUNT(*) FROM users WHERE is_active = 1", [], |row| {
-        row.get(0)
-    })?;
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM users WHERE is_active = 1",
+        [],
+        |row| row.get(0),
+    )?;
     Ok(count > 0)
 }
 

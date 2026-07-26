@@ -3,6 +3,7 @@ pub mod backup_commands;
 pub mod category_commands;
 pub mod customer_commands;
 pub mod expense_commands;
+pub mod invoice_payment_commands;
 pub mod payment_commands;
 pub mod product_commands;
 pub mod purchase_commands;

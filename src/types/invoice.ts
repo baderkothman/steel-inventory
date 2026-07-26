@@ -1,5 +1,6 @@
 export type InvoiceListRow = {
   id: number;
+  party_id?: number | null;
   invoice_number: string;
   invoice_date: string;
   party_name: string;
@@ -14,6 +15,7 @@ export type InvoiceListRow = {
   status: string;
   notes?: string | null;
   created_at: string;
+  deleted_at?: string | null;
 };
 
 export type InvoiceSaveResult = {

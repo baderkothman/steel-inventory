@@ -115,22 +115,38 @@ pub fn adjust_stock(
     payload: StockAdjustmentPayload,
 ) -> Result<(), AppError> {
     positive_f64(payload.quantity, "Quantity")?;
-    let allowed = ["opening_stock", "adjustment_in", "adjustment_out", "damaged_stock"];
+    let allowed = [
+        "opening_stock",
+        "adjustment_in",
+        "adjustment_out",
+        "damaged_stock",
+    ];
     if !allowed.contains(&payload.transaction_type.as_str()) {
         return Err(AppError::validation("Invalid stock adjustment type."));
     }
 
     let settings = get_company_settings(conn)?;
-    let quantity_in = if payload.transaction_type == "opening_stock" || payload.transaction_type == "adjustment_in" {
+    let quantity_in = if payload.transaction_type == "opening_stock"
+        || payload.transaction_type == "adjustment_in"
+    {
         payload.quantity
     } else {
         0.0
     };
-    let quantity_out = if quantity_in > 0.0 { 0.0 } else { payload.quantity };
+    let quantity_out = if quantity_in > 0.0 {
+        0.0
+    } else {
+        payload.quantity
+    };
     let delta = quantity_in - quantity_out;
 
     let tx = conn.unchecked_transaction()?;
-    update_stock(&tx, payload.product_id, delta, settings.allow_negative_stock)?;
+    update_stock(
+        &tx,
+        payload.product_id,
+        delta,
+        settings.allow_negative_stock,
+    )?;
     insert_inventory_transaction(
         &tx,
         payload.product_id,
@@ -150,7 +166,9 @@ pub fn adjust_stock(
         "inventory_transactions",
         payload.product_id,
         None,
-        Some(serde_json::json!({"transaction_type": payload.transaction_type, "quantity": payload.quantity})),
+        Some(
+            serde_json::json!({"transaction_type": payload.transaction_type, "quantity": payload.quantity}),
+        ),
     )?;
     tx.commit()?;
     Ok(())
@@ -186,14 +204,112 @@ pub fn cancel_stock_adjustment(
 
     let tx = conn.unchecked_transaction()?;
     tx.execute(
-        "UPDATE inventory_transactions SET status = 'cancelled' WHERE id = ?1",
-        [transaction_id],
+        "UPDATE inventory_transactions
+         SET status = 'cancelled', deleted_at = ?1
+         WHERE id = ?2",
+        params![now_iso(), transaction_id],
     )?;
     recalculate_stock(&tx, product_id)?;
     insert_audit_log(
         &tx,
         user_id,
         "cancel",
+        "inventory_transactions",
+        transaction_id,
+        None,
+        None,
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub fn restore_stock_adjustment(
+    conn: &Connection,
+    user_id: i64,
+    transaction_id: i64,
+) -> Result<(), AppError> {
+    let (product_id, reference_type, quantity_out, status): (i64, String, f64, String) = conn
+        .query_row(
+            "SELECT product_id, reference_type, quantity_out, status
+             FROM inventory_transactions WHERE id = ?1",
+            [transaction_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .map_err(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => {
+                AppError::not_found("Inventory transaction not found.")
+            }
+            other => other.into(),
+        })?;
+    if status == "active" {
+        return Ok(());
+    }
+    if !["manual", "product"].contains(&reference_type.as_str()) {
+        return Err(AppError::validation(
+            "Restore invoice inventory from its invoice.",
+        ));
+    }
+    let settings = get_company_settings(conn)?;
+    if !settings.allow_negative_stock
+        && quantity_out > 0.0
+        && current_stock(conn, product_id)? + f64::EPSILON < quantity_out
+    {
+        return Err(AppError::insufficient_stock(
+            "Restoring this stock adjustment would make inventory negative.",
+        ));
+    }
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "UPDATE inventory_transactions
+         SET status = 'active', deleted_at = NULL
+         WHERE id = ?1",
+        [transaction_id],
+    )?;
+    recalculate_stock(&tx, product_id)?;
+    insert_audit_log(
+        &tx,
+        user_id,
+        "restore",
+        "inventory_transactions",
+        transaction_id,
+        None,
+        None,
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub fn permanently_delete_stock_adjustment(
+    conn: &Connection,
+    user_id: i64,
+    transaction_id: i64,
+) -> Result<(), AppError> {
+    let (reference_type, status): (String, String) = conn
+        .query_row(
+            "SELECT reference_type, status FROM inventory_transactions WHERE id = ?1",
+            [transaction_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => {
+                AppError::not_found("Inventory transaction not found.")
+            }
+            other => other.into(),
+        })?;
+    if status != "cancelled" || !["manual", "product"].contains(&reference_type.as_str()) {
+        return Err(AppError::validation(
+            "Only a cancelled manual stock adjustment can be permanently deleted.",
+        ));
+    }
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "DELETE FROM inventory_transactions WHERE id = ?1",
+        [transaction_id],
+    )?;
+    insert_audit_log(
+        &tx,
+        user_id,
+        "delete",
         "inventory_transactions",
         transaction_id,
         None,
@@ -218,7 +334,7 @@ pub fn list_product_movement(
     let mut stmt = conn.prepare(
         "SELECT it.id, it.product_id, p.name, p.sku, it.transaction_type, it.reference_type,
                 it.reference_id, it.quantity_in, it.quantity_out, it.unit_cost_cents,
-                it.notes, it.status, it.created_at
+                it.notes, it.status, it.created_at, it.deleted_at
          FROM inventory_transactions it
          JOIN products p ON p.id = it.product_id
          WHERE it.product_id = ?1
@@ -233,7 +349,11 @@ pub fn list_product_movement(
                 product_id,
                 filters.date_from,
                 filters.date_to,
-                if filters.active_only.unwrap_or(false) { 1 } else { 0 }
+                if filters.active_only.unwrap_or(false) {
+                    1
+                } else {
+                    0
+                }
             ],
             map_transaction,
         )?
@@ -248,7 +368,7 @@ pub fn list_stock_movement(
     let mut stmt = conn.prepare(
         "SELECT it.id, it.product_id, p.name, p.sku, it.transaction_type, it.reference_type,
                 it.reference_id, it.quantity_in, it.quantity_out, it.unit_cost_cents,
-                it.notes, it.status, it.created_at
+                it.notes, it.status, it.created_at, it.deleted_at
          FROM inventory_transactions it
          JOIN products p ON p.id = it.product_id
          WHERE (?1 IS NULL OR date(it.created_at) >= date(?1))
@@ -261,7 +381,11 @@ pub fn list_stock_movement(
             params![
                 filters.date_from,
                 filters.date_to,
-                if filters.active_only.unwrap_or(false) { 1 } else { 0 }
+                if filters.active_only.unwrap_or(false) {
+                    1
+                } else {
+                    0
+                }
             ],
             map_transaction,
         )?
@@ -284,5 +408,6 @@ fn map_transaction(row: &rusqlite::Row<'_>) -> rusqlite::Result<InventoryTransac
         notes: row.get(10)?,
         status: row.get(11)?,
         created_at: row.get(12)?,
+        deleted_at: row.get(13)?,
     })
 }

@@ -77,11 +77,16 @@ pub fn list_backups(conn: &Connection) -> Result<Vec<BackupRow>, AppError> {
     Ok(rows)
 }
 
-fn create_backup(db_path: &Path, user_id: Option<i64>, backup_type: &str) -> Result<BackupRow, AppError> {
+fn create_backup(
+    db_path: &Path,
+    user_id: Option<i64>,
+    backup_type: &str,
+) -> Result<BackupRow, AppError> {
     let conn = open_database(db_path)?;
     let backup_dir = backup_dir(&conn)?;
-    fs::create_dir_all(&backup_dir)
-        .map_err(|error| AppError::backup_failed(format!("Could not create backup folder: {error}")))?;
+    fs::create_dir_all(&backup_dir).map_err(|error| {
+        AppError::backup_failed(format!("Could not create backup folder: {error}"))
+    })?;
     let backup_path = backup_dir.join(format!(
         "steel_inventory_backup_{}.db",
         filename_timestamp()

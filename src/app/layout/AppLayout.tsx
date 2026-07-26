@@ -10,7 +10,7 @@ export function AppLayout() {
       <Sidebar />
       <Box sx={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
         <Topbar />
-        <Box component="main" sx={{ flex: 1, overflow: "auto", p: 3 }}>
+        <Box component="main" sx={{ flex: 1, overflow: "auto", p: { xs: 1.5, md: 3 } }}>
           <Outlet />
         </Box>
       </Box>

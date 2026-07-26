@@ -115,7 +115,7 @@ pub fn list_parties(
     let active_only = filters.active_only.unwrap_or(false);
     let sql = format!(
         "SELECT id, name, company_name, phone, email, address, tax_number,
-                opening_balance_cents, notes, is_active, created_at, updated_at
+                opening_balance_cents, notes, is_active, created_at, updated_at, deleted_at
          FROM {}
          WHERE (?1 IS NULL OR (
              name LIKE '%' || ?1 || '%' OR
@@ -129,7 +129,10 @@ pub fn list_parties(
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt
-        .query_map(params![search, if active_only { 1 } else { 0 }], base_party_from_row)?
+        .query_map(
+            params![search, if active_only { 1 } else { 0 }],
+            base_party_from_row,
+        )?
         .collect::<Result<Vec<_>, _>>()?;
 
     rows.into_iter()
@@ -144,17 +147,17 @@ pub fn list_parties(
 pub fn get_party(conn: &Connection, kind: PartyKind, id: i64) -> Result<PartyRow, AppError> {
     let sql = format!(
         "SELECT id, name, company_name, phone, email, address, tax_number,
-                opening_balance_cents, notes, is_active, created_at, updated_at
+                opening_balance_cents, notes, is_active, created_at, updated_at, deleted_at
          FROM {}
          WHERE id = ?1",
         kind.table()
     );
-    let mut party = conn
-        .query_row(&sql, [id], base_party_from_row)
-        .map_err(|error| match error {
-            rusqlite::Error::QueryReturnedNoRows => AppError::not_found("Record not found."),
-            other => other.into(),
-        })?;
+    let mut party =
+        conn.query_row(&sql, [id], base_party_from_row)
+            .map_err(|error| match error {
+                rusqlite::Error::QueryReturnedNoRows => AppError::not_found("Record not found."),
+                other => other.into(),
+            })?;
     party.balance_cents = party_balance(conn, kind, id)?;
     Ok(party)
 }
@@ -254,9 +257,32 @@ pub fn archive_party(
     id: i64,
 ) -> Result<(), AppError> {
     ensure_party_exists(conn, kind, id)?;
-    let sql = format!("UPDATE {} SET is_active = 0, updated_at = ?1 WHERE id = ?2", kind.table());
+    let sql = format!(
+        "UPDATE {}
+         SET is_active = 0, updated_at = ?1, deleted_at = ?1
+         WHERE id = ?2",
+        kind.table()
+    );
     conn.execute(&sql, params![now_iso(), id])?;
     insert_audit_log(conn, user_id, "archive", kind.table(), id, None, None)?;
+    Ok(())
+}
+
+pub fn restore_party(
+    conn: &Connection,
+    user_id: i64,
+    kind: PartyKind,
+    id: i64,
+) -> Result<(), AppError> {
+    ensure_party_exists(conn, kind, id)?;
+    let sql = format!(
+        "UPDATE {}
+         SET is_active = 1, updated_at = ?1, deleted_at = NULL
+         WHERE id = ?2",
+        kind.table()
+    );
+    conn.execute(&sql, params![now_iso(), id])?;
+    insert_audit_log(conn, user_id, "restore", kind.table(), id, None, None)?;
     Ok(())
 }
 
@@ -322,7 +348,10 @@ pub fn party_balance(conn: &Connection, kind: PartyKind, id: i64) -> Result<i64,
            AND {}",
         kind.valid_payment_filter()
     );
-    let opening_sql = format!("SELECT opening_balance_cents FROM {} WHERE id = ?1", kind.table());
+    let opening_sql = format!(
+        "SELECT opening_balance_cents FROM {} WHERE id = ?1",
+        kind.table()
+    );
 
     let opening: i64 = conn.query_row(&opening_sql, [id], |row| row.get(0))?;
     let invoice_total: i64 = conn.query_row(&invoice_sql, [id], |row| row.get(0))?;
@@ -348,7 +377,10 @@ pub fn statement(
         validate_date(date, "End date")?;
     }
 
-    let opening_sql = format!("SELECT opening_balance_cents FROM {} WHERE id = ?1", kind.table());
+    let opening_sql = format!(
+        "SELECT opening_balance_cents FROM {} WHERE id = ?1",
+        kind.table()
+    );
     let mut running_balance: i64 = conn.query_row(&opening_sql, [id], |row| row.get(0))?;
 
     if let Some(date_from) = filters.date_from.as_deref() {
@@ -361,7 +393,11 @@ pub fn statement(
         entry_type: "Opening Balance".to_string(),
         reference: "Opening".to_string(),
         debit_cents: running_balance.max(0),
-        credit_cents: if running_balance < 0 { running_balance.abs() } else { 0 },
+        credit_cents: if running_balance < 0 {
+            running_balance.abs()
+        } else {
+            0
+        },
         balance_cents: running_balance,
     }];
 
@@ -489,7 +525,12 @@ fn prior_payment_total(
     );
     conn.query_row(
         &sql,
-        params![kind.payment_party_type(), id, kind.payment_direction(), date_from],
+        params![
+            kind.payment_party_type(),
+            id,
+            kind.payment_direction(),
+            date_from
+        ],
         |row| row.get(0),
     )
     .map_err(Into::into)
@@ -526,5 +567,6 @@ fn base_party_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PartyRow> {
         balance_cents: 0,
         created_at: row.get(10)?,
         updated_at: row.get(11)?,
+        deleted_at: row.get(12)?,
     })
 }

@@ -1,10 +1,7 @@
 use tauri::State;
 
 use crate::{
-    models::DemoSeedResult,
-    services::seed_service,
-    state::AppState,
-    utils::errors::AppError,
+    models::DemoSeedResult, services::seed_service, state::AppState, utils::errors::AppError,
 };
 
 #[tauri::command]

@@ -97,7 +97,7 @@ body {
   gap: 16px;
   padding: 10px 12px;
   background: var(--stock-tint);
-  border-left: 4px solid var(--stock-accent);
+  border: 1px solid #c9dadd;
 }
 
 .stock-group__heading span {
@@ -215,5 +215,16 @@ body {
 @media print {
   body {
     overflow: visible;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }

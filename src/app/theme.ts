@@ -57,32 +57,105 @@ export const appTheme = createTheme({
     },
     button: {
       textTransform: "none",
-      fontWeight: 700,
+      fontWeight: 650,
       letterSpacing: 0
+    },
+    body2: {
+      lineHeight: 1.5
     }
   },
   components: {
     MuiButton: {
       styleOverrides: {
         root: {
-          borderRadius: 6
+          borderRadius: 6,
+          minHeight: 36,
+          "&:focus-visible": {
+            outline: "3px solid rgba(31,111,120,0.24)",
+            outlineOffset: 2
+          }
         }
       }
     },
     MuiCard: {
       styleOverrides: {
         root: {
-          borderRadius: 8,
-          boxShadow: "0 1px 2px rgba(16, 24, 40, 0.06)"
+          borderRadius: 10,
+          boxShadow: "none"
+        }
+      }
+    },
+    MuiPaper: {
+      styleOverrides: {
+        outlined: {
+          borderColor: "#d7e0e7"
         }
       }
     },
     MuiTableCell: {
       styleOverrides: {
+        root: {
+          padding: "12px 16px",
+          borderBottomColor: "#e3e9ee",
+          fontSize: "0.875rem",
+          lineHeight: 1.4,
+          "&[align='right']": {
+            fontVariantNumeric: "tabular-nums"
+          }
+        },
         head: {
           fontWeight: 700,
-          color: "#2f3b47",
-          backgroundColor: "#f2f5f7"
+          color: "#33414d",
+          backgroundColor: "#f2f6f7",
+          whiteSpace: "nowrap",
+          zIndex: 2
+        }
+      }
+    },
+    MuiTableRow: {
+      styleOverrides: {
+        root: {
+          transition: "background-color 140ms ease-out",
+          "&.MuiTableRow-hover:hover": {
+            backgroundColor: "#f2f7f7"
+          },
+          "&.Mui-selected, &.Mui-selected:hover": {
+            backgroundColor: "#e5f0f1"
+          },
+          "&:focus-within": {
+            backgroundColor: "#f2f7f7"
+          }
+        }
+      }
+    },
+    MuiTableSortLabel: {
+      styleOverrides: {
+        root: {
+          "&:focus-visible": {
+            outline: "2px solid rgba(31,111,120,0.35)",
+            outlineOffset: 2,
+            borderRadius: 3
+          }
+        }
+      }
+    },
+    MuiTablePagination: {
+      styleOverrides: {
+        toolbar: {
+          minHeight: 52
+        }
+      }
+    },
+    MuiMenu: {
+      defaultProps: {
+        elevation: 3
+      }
+    },
+    MuiMenuItem: {
+      styleOverrides: {
+        root: {
+          minHeight: 40,
+          fontSize: "0.875rem"
         }
       }
     },
@@ -94,6 +167,16 @@ export const appTheme = createTheme({
     MuiFormControl: {
       defaultProps: {
         size: "small"
+      }
+    },
+    MuiIconButton: {
+      styleOverrides: {
+        root: {
+          "&:focus-visible": {
+            outline: "3px solid rgba(31,111,120,0.24)",
+            outlineOffset: 2
+          }
+        }
       }
     }
   }

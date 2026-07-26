@@ -29,7 +29,12 @@ pub fn create_sales_invoice(
 ) -> Result<InvoiceSaveResult, AppError> {
     validate_sales_payload(&payload)?;
     let settings = get_company_settings(conn)?;
-    let invoice_number = match payload.invoice_number.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
+    let invoice_number = match payload
+        .invoice_number
+        .as_ref()
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+    {
         Some(value) => value.to_uppercase(),
         None => next_invoice_number(conn, "sales_invoices", &settings.invoice_prefix_sales)?,
     };
@@ -47,7 +52,9 @@ pub fn create_sales_invoice(
         payload.delivery_cents,
     )?;
     if payload.paid_cents > total {
-        return Err(AppError::validation("Paid amount cannot exceed invoice total."));
+        return Err(AppError::validation(
+            "Paid amount cannot exceed invoice total.",
+        ));
     }
     let remaining = total - payload.paid_cents;
     let status = payment_status(total, payload.paid_cents);
@@ -113,7 +120,12 @@ pub fn create_sales_invoice(
                 now
             ],
         )?;
-        update_stock(&tx, item.product_id, -item.quantity, settings.allow_negative_stock)?;
+        update_stock(
+            &tx,
+            item.product_id,
+            -item.quantity,
+            settings.allow_negative_stock,
+        )?;
         insert_inventory_transaction(
             &tx,
             item.product_id,
@@ -142,6 +154,24 @@ pub fn create_sales_invoice(
                     payload.invoice_date,
                     invoice_id,
                     Some(format!("Payment recorded with sales invoice {invoice_number}")),
+                    user_id,
+                    now
+                ],
+            )?;
+        } else {
+            tx.execute(
+                "INSERT INTO walk_in_sales_payments
+                 (sales_invoice_id, amount_cents, currency, payment_method, payment_date,
+                  notes, created_by, created_at)
+                 VALUES (?1, ?2, ?3, 'cash', ?4, ?5, ?6, ?7)",
+                params![
+                    invoice_id,
+                    payload.paid_cents,
+                    settings.default_currency,
+                    payload.invoice_date,
+                    Some(format!(
+                        "Payment recorded with sales invoice {invoice_number}"
+                    )),
                     user_id,
                     now
                 ],
@@ -175,9 +205,9 @@ pub fn cancel_sales_invoice(conn: &Connection, user_id: i64, id: i64) -> Result<
     let tx = conn.unchecked_transaction()?;
     tx.execute(
         "UPDATE inventory_transactions
-         SET status = 'cancelled'
-         WHERE reference_type = 'sales_invoice' AND reference_id = ?1",
-        [id],
+         SET status = 'cancelled', deleted_at = ?1
+         WHERE reference_type = 'sales_invoice' AND reference_id = ?2",
+        params![now, id],
     )?;
     for item in &invoice.items {
         recalculate_stock(&tx, item.product_id)?;
@@ -185,17 +215,137 @@ pub fn cancel_sales_invoice(conn: &Connection, user_id: i64, id: i64) -> Result<
     tx.execute(
         "UPDATE sales_invoices
          SET sales_status = 'cancelled', payment_status = 'unpaid', paid_cents = 0,
-             remaining_cents = total_cents, updated_at = ?1
+             remaining_cents = total_cents, updated_at = ?1, deleted_at = ?1
          WHERE id = ?2",
         params![now, id],
     )?;
     tx.execute(
         "UPDATE payments
-         SET status = 'cancelled'
+         SET status = 'cancelled', deleted_at = ?1, cancelled_by_invoice = 1
+         WHERE reference_type = 'sales_invoice' AND reference_id = ?2
+           AND status = 'active'",
+        params![now, id],
+    )?;
+    tx.execute(
+        "UPDATE walk_in_sales_payments
+         SET status = 'cancelled', deleted_at = ?1, cancelled_by_invoice = 1
+         WHERE sales_invoice_id = ?2 AND status = 'active'",
+        params![now, id],
+    )?;
+    insert_audit_log(&tx, user_id, "cancel", "sales_invoices", id, None, None)?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub fn restore_sales_invoice(conn: &Connection, user_id: i64, id: i64) -> Result<(), AppError> {
+    let invoice = get_sales_invoice(conn, id)?;
+    if invoice.invoice.status != "cancelled" {
+        return Ok(());
+    }
+    let settings = get_company_settings(conn)?;
+    if !settings.allow_negative_stock {
+        for item in &invoice.items {
+            if current_stock(conn, item.product_id)? + f64::EPSILON < item.quantity {
+                return Err(AppError::validation(format!(
+                    "Cannot restore invoice {} because {} no longer has enough stock.",
+                    invoice.invoice.invoice_number, item.product_name
+                )));
+            }
+        }
+    }
+
+    let now = now_iso();
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "UPDATE inventory_transactions
+         SET status = 'active', deleted_at = NULL
          WHERE reference_type = 'sales_invoice' AND reference_id = ?1",
         [id],
     )?;
-    insert_audit_log(&tx, user_id, "cancel", "sales_invoices", id, None, None)?;
+    for item in &invoice.items {
+        recalculate_stock(&tx, item.product_id)?;
+    }
+    tx.execute(
+        "UPDATE payments
+         SET status = 'active', deleted_at = NULL, cancelled_by_invoice = 0
+         WHERE reference_type = 'sales_invoice' AND reference_id = ?1
+           AND cancelled_by_invoice = 1",
+        [id],
+    )?;
+    tx.execute(
+        "UPDATE walk_in_sales_payments
+         SET status = 'active', deleted_at = NULL, cancelled_by_invoice = 0
+         WHERE sales_invoice_id = ?1 AND cancelled_by_invoice = 1",
+        [id],
+    )?;
+    let paid_cents: i64 = if invoice.invoice.party_id.is_some() {
+        tx.query_row(
+            "SELECT COALESCE(SUM(amount_cents), 0)
+             FROM payments
+             WHERE reference_type = 'sales_invoice' AND reference_id = ?1
+               AND status = 'active'",
+            [id],
+            |row| row.get(0),
+        )?
+    } else {
+        tx.query_row(
+            "SELECT COALESCE(SUM(amount_cents), 0)
+             FROM walk_in_sales_payments
+             WHERE sales_invoice_id = ?1 AND status = 'active'",
+            [id],
+            |row| row.get(0),
+        )?
+    };
+    tx.execute(
+        "UPDATE sales_invoices
+         SET sales_status = 'completed', paid_cents = ?1,
+             remaining_cents = MAX(total_cents - ?1, 0),
+             payment_status = CASE
+               WHEN ?1 <= 0 THEN 'unpaid'
+               WHEN ?1 >= total_cents THEN 'paid'
+               ELSE 'partial'
+             END,
+             updated_at = ?2, deleted_at = NULL
+         WHERE id = ?3",
+        params![paid_cents, now, id],
+    )?;
+    insert_audit_log(&tx, user_id, "restore", "sales_invoices", id, None, None)?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub fn permanently_delete_sales_invoice(
+    conn: &Connection,
+    user_id: i64,
+    id: i64,
+) -> Result<(), AppError> {
+    let invoice = get_sales_invoice(conn, id)?;
+    if invoice.invoice.status != "cancelled" {
+        return Err(AppError::validation(
+            "Only a cancelled sales invoice can be permanently deleted.",
+        ));
+    }
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "DELETE FROM payments
+         WHERE reference_type = 'sales_invoice' AND reference_id = ?1",
+        [id],
+    )?;
+    tx.execute(
+        "DELETE FROM walk_in_sales_payments WHERE sales_invoice_id = ?1",
+        [id],
+    )?;
+    tx.execute(
+        "DELETE FROM inventory_transactions
+         WHERE reference_type = 'sales_invoice' AND reference_id = ?1",
+        [id],
+    )?;
+    tx.execute(
+        "DELETE FROM sales_invoice_items WHERE sales_invoice_id = ?1",
+        [id],
+    )?;
+    tx.execute("DELETE FROM sales_invoices WHERE id = ?1", [id])?;
+    insert_audit_log(&tx, user_id, "delete", "sales_invoices", id, None, None)?;
     tx.commit()?;
     Ok(())
 }
@@ -205,10 +355,10 @@ pub fn list_sales_invoices(
     filters: InvoiceFilters,
 ) -> Result<Vec<InvoiceListRow>, AppError> {
     let mut stmt = conn.prepare(
-        "SELECT si.id, si.invoice_number, si.invoice_date, COALESCE(c.name, 'Walk-in Customer'),
+        "SELECT si.id, si.customer_id, si.invoice_number, si.invoice_date, COALESCE(c.name, 'Walk-in Customer'),
                 si.subtotal_cents, si.discount_cents, si.tax_cents, si.delivery_cents,
                 si.total_cents, si.paid_cents, si.remaining_cents, si.payment_status,
-                si.sales_status, si.notes, si.created_at
+                si.sales_status, si.notes, si.created_at, si.deleted_at
          FROM sales_invoices si
          LEFT JOIN customers c ON c.id = si.customer_id
          WHERE (?1 IS NULL OR date(si.invoice_date) >= date(?1))
@@ -225,7 +375,11 @@ pub fn list_sales_invoices(
                 filters.date_to,
                 filters.party_id,
                 filters.payment_status,
-                if filters.active_only.unwrap_or(false) { 1 } else { 0 }
+                if filters.active_only.unwrap_or(false) {
+                    1
+                } else {
+                    0
+                }
             ],
             map_invoice_row,
         )?
@@ -236,10 +390,10 @@ pub fn list_sales_invoices(
 pub fn get_sales_invoice(conn: &Connection, id: i64) -> Result<InvoiceDetail, AppError> {
     let invoice = conn
         .query_row(
-            "SELECT si.id, si.invoice_number, si.invoice_date, COALESCE(c.name, 'Walk-in Customer'),
+            "SELECT si.id, si.customer_id, si.invoice_number, si.invoice_date, COALESCE(c.name, 'Walk-in Customer'),
                     si.subtotal_cents, si.discount_cents, si.tax_cents, si.delivery_cents,
                     si.total_cents, si.paid_cents, si.remaining_cents, si.payment_status,
-                    si.sales_status, si.notes, si.created_at
+                    si.sales_status, si.notes, si.created_at, si.deleted_at
              FROM sales_invoices si
              LEFT JOIN customers c ON c.id = si.customer_id
              WHERE si.id = ?1",
@@ -307,7 +461,9 @@ pub fn sales_invoice_html(conn: &Connection, id: i64) -> Result<String, AppError
 fn validate_sales_payload(payload: &SalesInvoicePayload) -> Result<(), AppError> {
     validate_date(&payload.invoice_date, "Invoice date")?;
     if payload.items.is_empty() {
-        return Err(AppError::validation("At least one invoice item is required."));
+        return Err(AppError::validation(
+            "At least one invoice item is required.",
+        ));
     }
     non_negative_i64(payload.discount_cents, "Discount")?;
     non_negative_i64(payload.tax_cents, "Tax")?;
@@ -336,20 +492,22 @@ fn ensure_unique_sales_number(conn: &Connection, invoice_number: &str) -> Result
 fn map_invoice_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<InvoiceListRow> {
     Ok(InvoiceListRow {
         id: row.get(0)?,
-        invoice_number: row.get(1)?,
-        invoice_date: row.get(2)?,
-        party_name: row.get(3)?,
-        subtotal_cents: row.get(4)?,
-        discount_cents: row.get(5)?,
-        tax_cents: row.get(6)?,
-        extra_cents: row.get(7)?,
-        total_cents: row.get(8)?,
-        paid_cents: row.get(9)?,
-        remaining_cents: row.get(10)?,
-        payment_status: row.get(11)?,
-        status: row.get(12)?,
-        notes: row.get(13)?,
-        created_at: row.get(14)?,
+        party_id: row.get(1)?,
+        invoice_number: row.get(2)?,
+        invoice_date: row.get(3)?,
+        party_name: row.get(4)?,
+        subtotal_cents: row.get(5)?,
+        discount_cents: row.get(6)?,
+        tax_cents: row.get(7)?,
+        extra_cents: row.get(8)?,
+        total_cents: row.get(9)?,
+        paid_cents: row.get(10)?,
+        remaining_cents: row.get(11)?,
+        payment_status: row.get(12)?,
+        status: row.get(13)?,
+        notes: row.get(14)?,
+        created_at: row.get(15)?,
+        deleted_at: row.get(16)?,
     })
 }
 

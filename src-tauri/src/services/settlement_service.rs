@@ -22,15 +22,21 @@ pub fn create_settlement_payment(
     validate_date(&payload.period_end, "Period end")?;
     validate_date(&payload.payment_date, "Payment date")?;
     if payload.period_end < payload.period_start {
-        return Err(AppError::validation("Period end must be on or after period start."));
+        return Err(AppError::validation(
+            "Period end must be on or after period start.",
+        ));
     }
     non_negative_i64(payload.amount_cents, "Amount")?;
     if payload.amount_cents <= 0 {
-        return Err(AppError::validation("Settlement amount must be greater than zero."));
+        return Err(AppError::validation(
+            "Settlement amount must be greater than zero.",
+        ));
     }
     let status = payload.status.trim().to_lowercase();
     if !["unpaid", "partial", "paid"].contains(&status.as_str()) {
-        return Err(AppError::validation("Settlement status must be unpaid, partial, or paid."));
+        return Err(AppError::validation(
+            "Settlement status must be unpaid, partial, or paid.",
+        ));
     }
     ensure_supplier_exists(conn, payload.supplier_id)?;
 
@@ -63,7 +69,9 @@ pub fn create_settlement_payment(
         "supplier_settlement_payments",
         id,
         None,
-        Some(serde_json::json!({"id": id, "supplier_id": payload.supplier_id, "amount_cents": payload.amount_cents})),
+        Some(
+            serde_json::json!({"id": id, "supplier_id": payload.supplier_id, "amount_cents": payload.amount_cents}),
+        ),
     )?;
     get_settlement_payment(conn, id)
 }
@@ -72,9 +80,9 @@ pub fn delete_settlement_payment(conn: &Connection, user_id: i64, id: i64) -> Re
     let tx = conn.unchecked_transaction()?;
     let affected = tx.execute(
         "UPDATE supplier_settlement_payments
-         SET lifecycle_status = 'cancelled'
-         WHERE id = ?1 AND lifecycle_status = 'active'",
-        [id],
+         SET lifecycle_status = 'cancelled', deleted_at = ?1
+         WHERE id = ?2 AND lifecycle_status = 'active'",
+        params![now_iso(), id],
     )?;
     if affected == 0 {
         let exists: i64 = tx.query_row(
@@ -89,7 +97,70 @@ pub fn delete_settlement_payment(conn: &Connection, user_id: i64, id: i64) -> Re
             Err(AppError::not_found("Settlement payment not found."))
         };
     }
-    insert_audit_log(&tx, user_id, "cancel", "supplier_settlement_payments", id, None, None)?;
+    insert_audit_log(
+        &tx,
+        user_id,
+        "cancel",
+        "supplier_settlement_payments",
+        id,
+        None,
+        None,
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub fn restore_settlement_payment(
+    conn: &Connection,
+    user_id: i64,
+    id: i64,
+) -> Result<(), AppError> {
+    get_settlement_payment(conn, id)?;
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "UPDATE supplier_settlement_payments
+         SET lifecycle_status = 'active', deleted_at = NULL
+         WHERE id = ?1",
+        [id],
+    )?;
+    insert_audit_log(
+        &tx,
+        user_id,
+        "restore",
+        "supplier_settlement_payments",
+        id,
+        None,
+        None,
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub fn permanently_delete_settlement_payment(
+    conn: &Connection,
+    user_id: i64,
+    id: i64,
+) -> Result<(), AppError> {
+    let payment = get_settlement_payment(conn, id)?;
+    if payment.lifecycle_status != "cancelled" {
+        return Err(AppError::validation(
+            "Only a cancelled settlement payment can be permanently deleted.",
+        ));
+    }
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "DELETE FROM supplier_settlement_payments WHERE id = ?1",
+        [id],
+    )?;
+    insert_audit_log(
+        &tx,
+        user_id,
+        "delete",
+        "supplier_settlement_payments",
+        id,
+        None,
+        None,
+    )?;
     tx.commit()?;
     Ok(())
 }
@@ -101,28 +172,43 @@ pub fn list_settlement_payments(
     let mut stmt = conn.prepare(
         "SELECT sp.id, sp.supplier_id, COALESCE(s.name, 'Unknown Supplier'),
                 sp.period_start, sp.period_end, sp.amount_cents, sp.currency, sp.status,
-                sp.lifecycle_status, sp.payment_date, sp.reference, sp.notes, sp.created_at
+                sp.lifecycle_status, sp.payment_date, sp.reference, sp.notes, sp.created_at,
+                sp.deleted_at
          FROM supplier_settlement_payments sp
          LEFT JOIN suppliers s ON s.id = sp.supplier_id
          WHERE (?1 IS NULL OR date(sp.payment_date) >= date(?1))
            AND (?2 IS NULL OR date(sp.payment_date) <= date(?2))
            AND (?3 IS NULL OR sp.supplier_id = ?3)
+           AND (?4 = 0 OR sp.lifecycle_status = 'active')
          ORDER BY sp.payment_date DESC, sp.id DESC",
     )?;
     let rows = stmt
         .query_map(
-            params![filters.date_from, filters.date_to, filters.supplier_id],
+            params![
+                filters.date_from,
+                filters.date_to,
+                filters.supplier_id,
+                if filters.active_only.unwrap_or(false) {
+                    1
+                } else {
+                    0
+                }
+            ],
             map_settlement_row,
         )?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
 
-pub fn get_settlement_payment(conn: &Connection, id: i64) -> Result<SettlementPaymentRow, AppError> {
+pub fn get_settlement_payment(
+    conn: &Connection,
+    id: i64,
+) -> Result<SettlementPaymentRow, AppError> {
     conn.query_row(
         "SELECT sp.id, sp.supplier_id, COALESCE(s.name, 'Unknown Supplier'),
                 sp.period_start, sp.period_end, sp.amount_cents, sp.currency, sp.status,
-                sp.lifecycle_status, sp.payment_date, sp.reference, sp.notes, sp.created_at
+                sp.lifecycle_status, sp.payment_date, sp.reference, sp.notes, sp.created_at,
+                sp.deleted_at
          FROM supplier_settlement_payments sp
          LEFT JOIN suppliers s ON s.id = sp.supplier_id
          WHERE sp.id = ?1",
@@ -130,7 +216,9 @@ pub fn get_settlement_payment(conn: &Connection, id: i64) -> Result<SettlementPa
         map_settlement_row,
     )
     .map_err(|error| match error {
-        rusqlite::Error::QueryReturnedNoRows => AppError::not_found("Settlement payment not found."),
+        rusqlite::Error::QueryReturnedNoRows => {
+            AppError::not_found("Settlement payment not found.")
+        }
         other => other.into(),
     })
 }
@@ -169,5 +257,6 @@ fn map_settlement_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SettlementPay
         reference: row.get(10)?,
         notes: row.get(11)?,
         created_at: row.get(12)?,
+        deleted_at: row.get(13)?,
     })
 }

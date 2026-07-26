@@ -2,7 +2,11 @@ use rusqlite::{params, Connection};
 
 use crate::{
     models::DemoSeedResult,
-    utils::{audit::insert_audit_log, dates::{now_iso, today_date}, errors::AppError},
+    utils::{
+        audit::insert_audit_log,
+        dates::{now_iso, today_date},
+        errors::AppError,
+    },
 };
 
 pub fn seed_demo_data(conn: &mut Connection, user_id: i64) -> Result<DemoSeedResult, AppError> {
@@ -372,7 +376,11 @@ pub fn seed_demo_data(conn: &mut Connection, user_id: i64) -> Result<DemoSeedRes
         0,
         0,
         Some("Equipment and accessories, unpaid."),
-        &[(p_welder, 4.0, 250000), (p_bolt, 1000.0, 35), (p_sheet_ss, 6.0, 95000)],
+        &[
+            (p_welder, 4.0, 250000),
+            (p_bolt, 1000.0, 35),
+            (p_sheet_ss, 6.0, 95000),
+        ],
         &now,
     )?;
 
@@ -433,14 +441,93 @@ pub fn seed_demo_data(conn: &mut Connection, user_id: i64) -> Result<DemoSeedRes
         &now,
     )?;
 
-    insert_expense(&tx, user_id, 1, "Demo shop rent", 120_000, "USD", &today, "bank", Some("Monthly rent."), &now)?;
-    insert_expense(&tx, user_id, 2, "Demo electricity bill", 36_500, "USD", &today, "cash", None, &now)?;
-    insert_expense(&tx, user_id, 4, "Demo local delivery", 18_000, "USD", &today, "cash", Some("Delivery for SI-DEMO-1004."), &now)?;
-    insert_expense(&tx, user_id, 6, "Demo machine maintenance", 52_000, "USD", &today, "card", None, &now)?;
-    insert_expense(&tx, user_id, 8, "Demo packaging material", 7_500, "USD", &today, "cash", None, &now)?;
+    insert_expense(
+        &tx,
+        user_id,
+        1,
+        "Demo shop rent",
+        120_000,
+        "USD",
+        &today,
+        "bank",
+        Some("Monthly rent."),
+        &now,
+    )?;
+    insert_expense(
+        &tx,
+        user_id,
+        2,
+        "Demo electricity bill",
+        36_500,
+        "USD",
+        &today,
+        "cash",
+        None,
+        &now,
+    )?;
+    insert_expense(
+        &tx,
+        user_id,
+        4,
+        "Demo local delivery",
+        18_000,
+        "USD",
+        &today,
+        "cash",
+        Some("Delivery for SI-DEMO-1004."),
+        &now,
+    )?;
+    insert_expense(
+        &tx,
+        user_id,
+        6,
+        "Demo machine maintenance",
+        52_000,
+        "USD",
+        &today,
+        "card",
+        None,
+        &now,
+    )?;
+    insert_expense(
+        &tx,
+        user_id,
+        8,
+        "Demo packaging material",
+        7_500,
+        "USD",
+        &today,
+        "cash",
+        None,
+        &now,
+    )?;
 
-    insert_general_payment(&tx, user_id, "customer", customer_builders, "in", 30_000, "USD", "bank", &today, Some("Extra payment against old balance."), &now)?;
-    insert_general_payment(&tx, user_id, "supplier", supplier_metal, "out", 50_000, "USD", "bank", &today, Some("General payment to supplier."), &now)?;
+    insert_general_payment(
+        &tx,
+        user_id,
+        "customer",
+        customer_builders,
+        "in",
+        30_000,
+        "USD",
+        "bank",
+        &today,
+        Some("Extra payment against old balance."),
+        &now,
+    )?;
+    insert_general_payment(
+        &tx,
+        user_id,
+        "supplier",
+        supplier_metal,
+        "out",
+        50_000,
+        "USD",
+        "bank",
+        &today,
+        Some("General payment to supplier."),
+        &now,
+    )?;
 
     tx.execute(
         "INSERT INTO backups (backup_path, backup_type, status, notes, created_at)
@@ -459,7 +546,9 @@ pub fn seed_demo_data(conn: &mut Connection, user_id: i64) -> Result<DemoSeedRes
         "demo_seed",
         0,
         None,
-        Some(serde_json::json!({"products": 8, "suppliers": 3, "customers": 3, "purchases": 3, "sales": 4})),
+        Some(
+            serde_json::json!({"products": 8, "suppliers": 3, "customers": 3, "purchases": 3, "sales": 4}),
+        ),
     )?;
 
     tx.commit()?;
@@ -568,7 +657,10 @@ fn insert_purchase(
     items: &[(i64, f64, i64)],
     now: &str,
 ) -> Result<i64, AppError> {
-    let subtotal = items.iter().map(|(_, qty, cost)| (qty * *cost as f64).round() as i64).sum::<i64>();
+    let subtotal = items
+        .iter()
+        .map(|(_, qty, cost)| (qty * *cost as f64).round() as i64)
+        .sum::<i64>();
     let total = subtotal - discount_cents + tax_cents + shipping_cents;
     let remaining = total - paid_cents;
     let status = payment_status(total, paid_cents);
@@ -620,7 +712,10 @@ fn insert_sale(
     items: &[(i64, f64, i64)],
     now: &str,
 ) -> Result<i64, AppError> {
-    let subtotal = items.iter().map(|(_, qty, price)| (qty * *price as f64).round() as i64).sum::<i64>();
+    let subtotal = items
+        .iter()
+        .map(|(_, qty, price)| (qty * *price as f64).round() as i64)
+        .sum::<i64>();
     let total = subtotal - discount_cents + tax_cents + delivery_cents;
     let remaining = total - paid_cents;
     let status = payment_status(total, paid_cents);
@@ -662,6 +757,21 @@ fn insert_sale(
                  VALUES ('customer', ?1, 'in', ?2, 'USD', 'cash', ?3, 'sales_invoice', ?4, ?5, ?6, ?7)",
                 params![customer_id, paid_cents, date, invoice_id, format!("Demo payment with {invoice_number}"), user_id, now],
             )?;
+        } else {
+            conn.execute(
+                "INSERT INTO walk_in_sales_payments
+                 (sales_invoice_id, amount_cents, currency, payment_method, payment_date,
+                  notes, created_by, created_at)
+                 VALUES (?1, ?2, 'USD', 'cash', ?3, ?4, ?5, ?6)",
+                params![
+                    invoice_id,
+                    paid_cents,
+                    date,
+                    format!("Demo payment with {invoice_number}"),
+                    user_id,
+                    now
+                ],
+            )?;
         }
     }
     Ok(invoice_id)
@@ -680,9 +790,38 @@ fn insert_expense(
     now: &str,
 ) -> Result<(), AppError> {
     conn.execute(
-        "INSERT INTO expenses (expense_category_id, title, amount_cents, currency, expense_date, payment_method, notes, created_by, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
-        params![category_id, title, amount_cents, currency, date, method, notes, user_id, now],
+        "INSERT INTO expenses
+         (expense_category_id, title, amount_cents, currency, expense_date, payment_method,
+          notes, created_by, created_at, updated_at, paid_cents, remaining_cents, payment_status)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, ?3, 0, 'paid')",
+        params![
+            category_id,
+            title,
+            amount_cents,
+            currency,
+            date,
+            method,
+            notes,
+            user_id,
+            now
+        ],
+    )?;
+    let expense_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO expense_payments
+         (expense_id, amount_cents, currency, payment_method, payment_date,
+          notes, created_by, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            expense_id,
+            amount_cents,
+            currency,
+            method,
+            date,
+            Some("Demo expense payment"),
+            user_id,
+            now
+        ],
     )?;
     Ok(())
 }

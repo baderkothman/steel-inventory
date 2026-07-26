@@ -28,6 +28,7 @@ export type Product = {
   minimum_quantity: number;
   created_at: string;
   updated_at: string;
+  deleted_at?: string | null;
 };
 
 export type ProductPayload = {
@@ -102,12 +103,14 @@ export type SettlementPayment = {
   reference?: string | null;
   notes?: string | null;
   created_at: string;
+  deleted_at?: string | null;
 };
 
 export type SettlementFilters = {
   date_from?: string | null;
   date_to?: string | null;
   supplier_id?: number | null;
+  active_only?: boolean | null;
 };
 
 export type InventoryTransaction = {
@@ -124,4 +127,5 @@ export type InventoryTransaction = {
   notes?: string | null;
   status: string;
   created_at: string;
+  deleted_at?: string | null;
 };

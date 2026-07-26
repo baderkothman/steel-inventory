@@ -2,7 +2,10 @@ use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 
 use crate::{
-    models::{DashboardSummary, InvoiceFilters, MovementFilters, PartyFilters, ProductFilters, ReportFilters},
+    models::{
+        DashboardSummary, InvoiceFilters, MovementFilters, PartyFilters, ProductFilters,
+        ReportFilters,
+    },
     services::{
         inventory_service::list_stock_movement,
         party_service::{list_parties, party_balance, PartyKind},
@@ -13,7 +16,10 @@ use crate::{
     utils::{dates::today_date, errors::AppError},
 };
 
-pub fn dashboard_summary(conn: &Connection, date: Option<String>) -> Result<DashboardSummary, AppError> {
+pub fn dashboard_summary(
+    conn: &Connection,
+    date: Option<String>,
+) -> Result<DashboardSummary, AppError> {
     let date = date.unwrap_or_else(today_date);
     let today_sales_cents = scalar_i64(
         conn,
@@ -135,7 +141,10 @@ pub fn dashboard_summary(conn: &Connection, date: Option<String>) -> Result<Dash
     })
 }
 
-pub fn daily_sales_report(conn: &Connection, filters: ReportFilters) -> Result<Vec<Value>, AppError> {
+pub fn daily_sales_report(
+    conn: &Connection,
+    filters: ReportFilters,
+) -> Result<Vec<Value>, AppError> {
     let rows = list_sales_invoices(
         conn,
         InvoiceFilters {
@@ -208,7 +217,12 @@ pub fn profit_report(conn: &Connection, filters: ReportFilters) -> Result<Vec<Va
     )?;
     let rows = stmt
         .query_map(
-            params![filters.date_from, filters.date_to, filters.customer_id, filters.product_id],
+            params![
+                filters.date_from,
+                filters.date_to,
+                filters.customer_id,
+                filters.product_id
+            ],
             |row| {
                 Ok(json!({
                     "date": row.get::<_, String>(0)?,
@@ -224,7 +238,10 @@ pub fn profit_report(conn: &Connection, filters: ReportFilters) -> Result<Vec<Va
     Ok(rows)
 }
 
-pub fn monthly_profit_report(conn: &Connection, filters: ReportFilters) -> Result<Vec<Value>, AppError> {
+pub fn monthly_profit_report(
+    conn: &Connection,
+    filters: ReportFilters,
+) -> Result<Vec<Value>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT substr(si.invoice_date, 1, 7) AS month,
                 COALESCE(SUM(sii.total_price_cents), 0),
@@ -288,7 +305,10 @@ pub fn stock_report(conn: &Connection, filters: ReportFilters) -> Result<Vec<Val
 /// Printable physical stock-count sheet: system quantity plus blank counted/difference
 /// columns for manual entry, with supplier, category, unit, and storage location.
 /// Filters: category, supplier, and low-stock-only.
-pub fn stock_count_report(conn: &Connection, filters: ReportFilters) -> Result<Vec<Value>, AppError> {
+pub fn stock_count_report(
+    conn: &Connection,
+    filters: ReportFilters,
+) -> Result<Vec<Value>, AppError> {
     let products = list_products(
         conn,
         ProductFilters {
@@ -324,7 +344,10 @@ pub fn stock_count_report(conn: &Connection, filters: ReportFilters) -> Result<V
 /// Supplier settlement / payable report: how much is owed to each supplier based on
 /// goods of theirs that were actually sold (completed sales only). Groups by supplier
 /// and product, with quantity sold, unit cost, and amount owed per product and per supplier.
-pub fn supplier_settlement_report(conn: &Connection, filters: ReportFilters) -> Result<Vec<Value>, AppError> {
+pub fn supplier_settlement_report(
+    conn: &Connection,
+    filters: ReportFilters,
+) -> Result<Vec<Value>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT COALESCE(s.name, 'Unknown Supplier') AS supplier,
                 p.sku, p.name,
@@ -363,7 +386,10 @@ pub fn supplier_settlement_report(conn: &Connection, filters: ReportFilters) -> 
 
 /// Per-supplier settlement summary: grand total owed (from completed sales) minus
 /// settlement payments already recorded for the period, with remaining balance.
-pub fn supplier_settlement_summary(conn: &Connection, filters: ReportFilters) -> Result<Vec<Value>, AppError> {
+pub fn supplier_settlement_summary(
+    conn: &Connection,
+    filters: ReportFilters,
+) -> Result<Vec<Value>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT s.id, COALESCE(s.name, 'Unknown Supplier') AS supplier,
                 COALESCE(owed.owed_cents, 0) AS owed_cents,
@@ -411,7 +437,10 @@ pub fn supplier_settlement_summary(conn: &Connection, filters: ReportFilters) ->
 
 /// Cheapest-supplier comparison: same specification across suppliers, sorted by
 /// selling price (cheapest first) within each shared product. Marks the cheapest row.
-pub fn cheapest_supplier_report(conn: &Connection, filters: ReportFilters) -> Result<Vec<Value>, AppError> {
+pub fn cheapest_supplier_report(
+    conn: &Connection,
+    filters: ReportFilters,
+) -> Result<Vec<Value>, AppError> {
     use std::collections::HashMap;
     let variants = crate::services::product_service::list_supplier_variants(
         conn,
@@ -435,7 +464,10 @@ pub fn cheapest_supplier_report(conn: &Connection, filters: ReportFilters) -> Re
     Ok(variants
         .into_iter()
         .map(|v| {
-            let is_cheapest = cheapest.get(&v.spec_key).map(|min| *min == v.selling_price_cents).unwrap_or(false);
+            let is_cheapest = cheapest
+                .get(&v.spec_key)
+                .map(|min| *min == v.selling_price_cents)
+                .unwrap_or(false);
             json!({
                 "product": v.name,
                 "supplier": v.supplier_name,
@@ -477,17 +509,24 @@ pub fn low_stock_report(conn: &Connection) -> Result<Vec<Value>, AppError> {
         .collect())
 }
 
-pub fn customer_debt_report(conn: &Connection, filters: ReportFilters) -> Result<Vec<Value>, AppError> {
+pub fn customer_debt_report(
+    conn: &Connection,
+    filters: ReportFilters,
+) -> Result<Vec<Value>, AppError> {
     debt_report(conn, PartyKind::Customer, filters)
 }
 
-pub fn supplier_debt_report(conn: &Connection, filters: ReportFilters) -> Result<Vec<Value>, AppError> {
+pub fn supplier_debt_report(
+    conn: &Connection,
+    filters: ReportFilters,
+) -> Result<Vec<Value>, AppError> {
     debt_report(conn, PartyKind::Supplier, filters)
 }
 
 pub fn expense_report(conn: &Connection, filters: ReportFilters) -> Result<Vec<Value>, AppError> {
     let mut stmt = conn.prepare(
-        "SELECT e.expense_date, ec.name, e.title, e.amount_cents, e.payment_method, e.notes
+        "SELECT e.expense_date, ec.name, e.title, e.amount_cents, e.paid_cents,
+                e.remaining_cents, e.payment_status, e.payment_method, e.notes
          FROM expenses e
          JOIN expense_categories ec ON ec.id = e.expense_category_id
          WHERE e.status = 'active'
@@ -502,8 +541,11 @@ pub fn expense_report(conn: &Connection, filters: ReportFilters) -> Result<Vec<V
                 "category": row.get::<_, String>(1)?,
                 "title": row.get::<_, String>(2)?,
                 "amount_cents": row.get::<_, i64>(3)?,
-                "payment_method": row.get::<_, String>(4)?,
-                "notes": row.get::<_, Option<String>>(5)?
+                "paid_cents": row.get::<_, i64>(4)?,
+                "remaining_cents": row.get::<_, i64>(5)?,
+                "payment_status": row.get::<_, String>(6)?,
+                "payment_method": row.get::<_, String>(7)?,
+                "notes": row.get::<_, Option<String>>(8)?
             }))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -571,7 +613,10 @@ pub fn inventory_value_report(conn: &Connection) -> Result<Vec<Value>, AppError>
         .collect())
 }
 
-pub fn best_selling_products_report(conn: &Connection, filters: ReportFilters) -> Result<Vec<Value>, AppError> {
+pub fn best_selling_products_report(
+    conn: &Connection,
+    filters: ReportFilters,
+) -> Result<Vec<Value>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT p.sku, p.name, SUM(sii.quantity), SUM(sii.total_price_cents), SUM(sii.profit_cents)
          FROM sales_invoice_items sii
@@ -585,20 +630,26 @@ pub fn best_selling_products_report(conn: &Connection, filters: ReportFilters) -
          ORDER BY SUM(sii.quantity) DESC, SUM(sii.total_price_cents) DESC",
     )?;
     let rows = stmt
-        .query_map(params![filters.date_from, filters.date_to, filters.category_id], |row| {
-            Ok(json!({
-                "sku": row.get::<_, String>(0)?,
-                "product": row.get::<_, String>(1)?,
-                "quantity_sold": row.get::<_, f64>(2)?,
-                "sales_cents": row.get::<_, i64>(3)?,
-                "profit_cents": row.get::<_, i64>(4)?
-            }))
-        })?
+        .query_map(
+            params![filters.date_from, filters.date_to, filters.category_id],
+            |row| {
+                Ok(json!({
+                    "sku": row.get::<_, String>(0)?,
+                    "product": row.get::<_, String>(1)?,
+                    "quantity_sold": row.get::<_, f64>(2)?,
+                    "sales_cents": row.get::<_, i64>(3)?,
+                    "profit_cents": row.get::<_, i64>(4)?
+                }))
+            },
+        )?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
 
-pub fn stock_movement_report(conn: &Connection, filters: ReportFilters) -> Result<Vec<Value>, AppError> {
+pub fn stock_movement_report(
+    conn: &Connection,
+    filters: ReportFilters,
+) -> Result<Vec<Value>, AppError> {
     let rows = list_stock_movement(
         conn,
         MovementFilters {
@@ -626,7 +677,11 @@ pub fn stock_movement_report(conn: &Connection, filters: ReportFilters) -> Resul
         .collect())
 }
 
-fn debt_report(conn: &Connection, kind: PartyKind, filters: ReportFilters) -> Result<Vec<Value>, AppError> {
+fn debt_report(
+    conn: &Connection,
+    kind: PartyKind,
+    filters: ReportFilters,
+) -> Result<Vec<Value>, AppError> {
     let selected_party_id = match kind {
         PartyKind::Customer => filters.customer_id,
         PartyKind::Supplier => filters.supplier_id,

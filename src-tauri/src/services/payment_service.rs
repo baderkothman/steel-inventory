@@ -12,12 +12,16 @@ use crate::{
     },
 };
 
-pub fn list_payments(conn: &Connection, filters: PaymentFilters) -> Result<Vec<PaymentRow>, AppError> {
+pub fn list_payments(
+    conn: &Connection,
+    filters: PaymentFilters,
+) -> Result<Vec<PaymentRow>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT p.id, p.party_type, p.party_id,
                 CASE WHEN p.party_type = 'customer' THEN c.name ELSE s.name END AS party_name,
                 p.payment_direction, p.amount_cents, p.currency, p.payment_method,
-                p.payment_date, p.reference_type, p.reference_id, p.notes, p.status, p.created_at
+                p.payment_date, p.reference_type, p.reference_id, p.notes, p.status, p.created_at,
+                p.deleted_at
          FROM payments p
          LEFT JOIN customers c ON p.party_type = 'customer' AND c.id = p.party_id
          LEFT JOIN suppliers s ON p.party_type = 'supplier' AND s.id = p.party_id
@@ -35,7 +39,11 @@ pub fn list_payments(conn: &Connection, filters: PaymentFilters) -> Result<Vec<P
                 filters.date_to,
                 filters.party_type,
                 filters.party_id,
-                if filters.active_only.unwrap_or(false) { 1 } else { 0 }
+                if filters.active_only.unwrap_or(false) {
+                    1
+                } else {
+                    0
+                }
             ],
             map_payment,
         )?
@@ -95,7 +103,9 @@ pub fn create_payment(
         "payments",
         id,
         None,
-        Some(serde_json::json!({"id": id, "party_type": payload.party_type, "amount_cents": payload.amount_cents})),
+        Some(
+            serde_json::json!({"id": id, "party_type": payload.party_type, "amount_cents": payload.amount_cents}),
+        ),
     )?;
     tx.commit()?;
     get_payment(conn, id)
@@ -108,8 +118,10 @@ pub fn delete_payment(conn: &Connection, user_id: i64, id: i64) -> Result<(), Ap
     }
     let tx = conn.unchecked_transaction()?;
     tx.execute(
-        "UPDATE payments SET status = 'cancelled' WHERE id = ?1",
-        [id],
+        "UPDATE payments
+         SET status = 'cancelled', deleted_at = ?1, cancelled_by_invoice = 0
+         WHERE id = ?2",
+        params![now_iso(), id],
     )?;
     recalculate_linked_invoice_payment(
         &tx,
@@ -123,12 +135,79 @@ pub fn delete_payment(conn: &Connection, user_id: i64, id: i64) -> Result<(), Ap
     Ok(())
 }
 
+pub fn restore_payment(conn: &Connection, user_id: i64, id: i64) -> Result<(), AppError> {
+    let payment = get_payment(conn, id)?;
+    if payment.status != "cancelled" {
+        return Ok(());
+    }
+    if let (Some(reference_type), Some(reference_id)) =
+        (payment.reference_type.as_deref(), payment.reference_id)
+    {
+        let active: i64 = match reference_type {
+            "purchase_invoice" => conn.query_row(
+                "SELECT COUNT(*) FROM purchase_invoices
+                 WHERE id = ?1 AND status = 'active'",
+                [reference_id],
+                |row| row.get(0),
+            )?,
+            "sales_invoice" => conn.query_row(
+                "SELECT COUNT(*) FROM sales_invoices
+                 WHERE id = ?1 AND sales_status = 'completed'",
+                [reference_id],
+                |row| row.get(0),
+            )?,
+            _ => 1,
+        };
+        if active == 0 {
+            return Err(AppError::validation(
+                "Restore the linked invoice before restoring this payment.",
+            ));
+        }
+    }
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "UPDATE payments
+         SET status = 'active', deleted_at = NULL, cancelled_by_invoice = 0
+         WHERE id = ?1",
+        [id],
+    )?;
+    recalculate_linked_invoice_payment(
+        &tx,
+        &payment.party_type,
+        payment.party_id,
+        payment.reference_type.as_deref(),
+        payment.reference_id,
+    )?;
+    insert_audit_log(&tx, user_id, "restore", "payments", id, None, None)?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub fn permanently_delete_payment(
+    conn: &Connection,
+    user_id: i64,
+    id: i64,
+) -> Result<(), AppError> {
+    let payment = get_payment(conn, id)?;
+    if payment.status != "cancelled" {
+        return Err(AppError::validation(
+            "Only a cancelled payment can be permanently deleted.",
+        ));
+    }
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM payments WHERE id = ?1", [id])?;
+    insert_audit_log(&tx, user_id, "delete", "payments", id, None, None)?;
+    tx.commit()?;
+    Ok(())
+}
+
 fn get_payment(conn: &Connection, id: i64) -> Result<PaymentRow, AppError> {
     conn.query_row(
         "SELECT p.id, p.party_type, p.party_id,
                 CASE WHEN p.party_type = 'customer' THEN c.name ELSE s.name END AS party_name,
                 p.payment_direction, p.amount_cents, p.currency, p.payment_method,
-                p.payment_date, p.reference_type, p.reference_id, p.notes, p.status, p.created_at
+                p.payment_date, p.reference_type, p.reference_id, p.notes, p.status, p.created_at,
+                p.deleted_at
          FROM payments p
          LEFT JOIN customers c ON p.party_type = 'customer' AND c.id = p.party_id
          LEFT JOIN suppliers s ON p.party_type = 'supplier' AND s.id = p.party_id
@@ -172,7 +251,9 @@ fn recalculate_linked_invoice_payment(
         _ => return Err(AppError::validation("Invalid payment invoice reference.")),
     };
     if party_type != expected_party {
-        return Err(AppError::validation("Payment party type does not match invoice reference."));
+        return Err(AppError::validation(
+            "Payment party type does not match invoice reference.",
+        ));
     }
 
     let sql = format!(
@@ -183,9 +264,9 @@ fn recalculate_linked_invoice_payment(
     let total: i64 = conn
         .query_row(&sql, params![reference_id, party_id], |row| row.get(0))
         .map_err(|error| match error {
-            rusqlite::Error::QueryReturnedNoRows => {
-                AppError::validation("Linked invoice does not belong to this party or is no longer active.")
-            }
+            rusqlite::Error::QueryReturnedNoRows => AppError::validation(
+                "Linked invoice does not belong to this party or is no longer active.",
+            ),
             other => other.into(),
         })?;
     let paid: i64 = conn.query_row(
@@ -200,7 +281,9 @@ fn recalculate_linked_invoice_payment(
         |row| row.get(0),
     )?;
     if paid > total {
-        return Err(AppError::validation("Payment amount does not fit the linked invoice balance."));
+        return Err(AppError::validation(
+            "Payment amount does not fit the linked invoice balance.",
+        ));
     }
     let remaining = total - paid;
     let status = payment_status(total, paid);
@@ -209,7 +292,10 @@ fn recalculate_linked_invoice_payment(
          SET paid_cents = ?1, remaining_cents = ?2, payment_status = ?3, updated_at = ?4
          WHERE id = ?5"
     );
-    conn.execute(&sql, params![paid, remaining, status, now_iso(), reference_id])?;
+    conn.execute(
+        &sql,
+        params![paid, remaining, status, now_iso(), reference_id],
+    )?;
     Ok(())
 }
 
@@ -221,7 +307,11 @@ fn ensure_payment_party_exists(
     let table = match party_type {
         "customer" => "customers",
         "supplier" => "suppliers",
-        _ => return Err(AppError::validation("Party type must be customer or supplier.")),
+        _ => {
+            return Err(AppError::validation(
+                "Party type must be customer or supplier.",
+            ))
+        }
     };
     let count: i64 = conn.query_row(
         &format!("SELECT COUNT(*) FROM {table} WHERE id = ?1"),
@@ -246,7 +336,9 @@ fn validate_payment_payload(payload: &PaymentPayload) -> Result<(), AppError> {
             return Err(AppError::validation("Invalid invoice reference type."));
         }
         if payload.reference_id.is_none() {
-            return Err(AppError::validation("Reference ID is required when reference type is provided."));
+            return Err(AppError::validation(
+                "Reference ID is required when reference type is provided.",
+            ));
         }
     } else if payload.reference_id.is_some() {
         return Err(AppError::validation(
@@ -260,7 +352,9 @@ fn direction_for_party(party_type: &str) -> Result<&'static str, AppError> {
     match party_type {
         "customer" => Ok("in"),
         "supplier" => Ok("out"),
-        _ => Err(AppError::validation("Party type must be customer or supplier.")),
+        _ => Err(AppError::validation(
+            "Party type must be customer or supplier.",
+        )),
     }
 }
 
@@ -269,7 +363,9 @@ fn map_payment(row: &rusqlite::Row<'_>) -> rusqlite::Result<PaymentRow> {
         id: row.get(0)?,
         party_type: row.get(1)?,
         party_id: row.get(2)?,
-        party_name: row.get::<_, Option<String>>(3)?.unwrap_or_else(|| "Unknown".to_string()),
+        party_name: row
+            .get::<_, Option<String>>(3)?
+            .unwrap_or_else(|| "Unknown".to_string()),
         payment_direction: row.get(4)?,
         amount_cents: row.get(5)?,
         currency: row.get(6)?,
@@ -280,5 +376,6 @@ fn map_payment(row: &rusqlite::Row<'_>) -> rusqlite::Result<PaymentRow> {
         notes: row.get(11)?,
         status: row.get(12)?,
         created_at: row.get(13)?,
+        deleted_at: row.get(14)?,
     })
 }

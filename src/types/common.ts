@@ -13,6 +13,7 @@ export type Category = {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  deleted_at?: string | null;
 };
 
 export type DateRangeFilters = {
@@ -34,6 +35,7 @@ export type CompanySettings = {
   backup_path?: string | null;
   default_tax_rate: number;
   default_profit_method: string;
+  deleted_retention_days: number;
   created_at: string;
   updated_at: string;
 };

@@ -2,19 +2,15 @@ use rusqlite::{params, Connection};
 
 use crate::{
     models::{CompanySettings, CompanySettingsPayload},
-    utils::{
-        audit::insert_audit_log,
-        dates::now_iso,
-        errors::AppError,
-        validation::{required},
-    },
+    utils::{audit::insert_audit_log, dates::now_iso, errors::AppError, validation::required},
 };
 
 pub fn get_company_settings(conn: &Connection) -> Result<CompanySettings, AppError> {
     conn.query_row(
         "SELECT id, company_name, phone, email, address, tax_number, default_currency,
                 invoice_prefix_sales, invoice_prefix_purchase, allow_negative_stock,
-                backup_path, default_tax_rate, default_profit_method, created_at, updated_at
+                backup_path, default_tax_rate, default_profit_method, deleted_retention_days,
+                created_at, updated_at
          FROM company_settings
          WHERE id = 1",
         [],
@@ -33,7 +29,14 @@ pub fn update_company_settings(
     required(&payload.invoice_prefix_sales, "Sales invoice prefix")?;
     required(&payload.invoice_prefix_purchase, "Purchase invoice prefix")?;
     if payload.default_tax_rate < 0.0 {
-        return Err(AppError::validation("Default tax value must be zero or greater."));
+        return Err(AppError::validation(
+            "Default tax value must be zero or greater.",
+        ));
+    }
+    if !(1..=365).contains(&payload.deleted_retention_days) {
+        return Err(AppError::validation(
+            "Recently deleted retention must be between 1 and 365 days.",
+        ));
     }
 
     let now = now_iso();
@@ -42,7 +45,7 @@ pub fn update_company_settings(
          SET company_name = ?1, phone = ?2, email = ?3, address = ?4, tax_number = ?5,
              default_currency = ?6, invoice_prefix_sales = ?7, invoice_prefix_purchase = ?8,
              allow_negative_stock = ?9, backup_path = ?10, default_tax_rate = ?11,
-             default_profit_method = ?12, updated_at = ?13
+             default_profit_method = ?12, deleted_retention_days = ?13, updated_at = ?14
          WHERE id = 1",
         params![
             payload.company_name.trim(),
@@ -57,6 +60,7 @@ pub fn update_company_settings(
             payload.backup_path,
             payload.default_tax_rate,
             payload.default_profit_method,
+            payload.deleted_retention_days,
             now
         ],
     )?;
@@ -88,7 +92,8 @@ fn map_settings(row: &rusqlite::Row<'_>) -> rusqlite::Result<CompanySettings> {
         backup_path: row.get(10)?,
         default_tax_rate: row.get(11)?,
         default_profit_method: row.get(12)?,
-        created_at: row.get(13)?,
-        updated_at: row.get(14)?,
+        deleted_retention_days: row.get(13)?,
+        created_at: row.get(14)?,
+        updated_at: row.get(15)?,
     })
 }

@@ -7,29 +7,24 @@ import {
   DialogContent,
   DialogTitle,
   MenuItem,
-  Paper,
   Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableRow,
   TextField
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
-import CancelIcon from "@mui/icons-material/Cancel";
+import DeleteIcon from "@mui/icons-material/Delete";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { MoneyText } from "../../components/MoneyText";
 import { PageHeader } from "../../components/PageHeader";
 import { ConfirmDialog } from "../../components/feedback/ConfirmDialog";
-import { EmptyState, LoadingState } from "../../components/feedback/PageState";
-import { PrintButton } from "../../components/print/PrintButton";
+import { LoadingState } from "../../components/feedback/PageState";
+import { EnterpriseTable, type TableColumn } from "../../components/table/EnterpriseTable";
+import { StatusBadge } from "../../components/table/StatusBadge";
 import { customerApi, paymentApi, supplierApi } from "../../lib/api";
 import { paymentMethods } from "../../lib/constants";
-import { toCents, today } from "../../lib/formatters";
+import { money, toCents, today } from "../../lib/formatters";
 import { normalizeError } from "../../lib/tauri";
-import type { PaymentPayload } from "../../types/payment";
+import type { PaymentPayload, PaymentRow } from "../../types/payment";
 
 type PaymentForm = Omit<PaymentPayload, "amount_cents"> & { amount: string };
 
@@ -50,9 +45,18 @@ export function PaymentsPage() {
   const [form, setForm] = useState<PaymentForm | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const { data: payments = [], isLoading } = useQuery({ queryKey: ["payments"], queryFn: () => paymentApi.list() });
+  const { data: payments = [], isLoading } = useQuery({ queryKey: ["payments"], queryFn: () => paymentApi.list({ active_only: true }) });
   const { data: customers = [] } = useQuery({ queryKey: ["customers", "payments"], queryFn: () => customerApi.list({ active_only: true }) });
   const { data: suppliers = [] } = useQuery({ queryKey: ["suppliers", "payments"], queryFn: () => supplierApi.list({ active_only: true }) });
+  const activePayments = useMemo(() => payments.filter((payment) => payment.status === "active"), [payments]);
+  const columns = useMemo<TableColumn<PaymentRow>[]>(() => [
+    { id: "date", label: "Date", value: (row) => row.payment_date, width: 110 },
+    { id: "party", label: "Party", value: (row) => row.party_name, minWidth: 180 },
+    { id: "direction", label: "Direction", value: (row) => row.payment_direction, render: (row) => <StatusBadge value={row.payment_direction} />, width: 110 },
+    { id: "method", label: "Method", value: (row) => row.payment_method, width: 110 },
+    { id: "amount", label: "Amount", value: (row) => money(row.amount_cents, row.currency), render: (row) => <MoneyText value={row.amount_cents} currency={row.currency} />, align: "right", minWidth: 120 },
+    { id: "reference", label: "Reference", value: (row) => row.reference_type ? `${row.reference_type.replace(/_/g, " ")} #${row.reference_id}` : "General", minWidth: 170 }
+  ], []);
 
   const partyOptions = useMemo(() => form?.party_type === "supplier" ? suppliers : customers, [customers, form?.party_type, suppliers]);
 
@@ -85,19 +89,22 @@ export function PaymentsPage() {
   return (
     <Stack spacing={2}>
       <PageHeader title="Payments" description="Record customer money-in and supplier money-out payments." actions={
-        <Stack direction="row" spacing={1}>
-          <PrintButton targetId="payments-print" title="Payments" subtitle={`${payments.length} records`} disabled={!payments.length} />
-          <Button startIcon={<AddIcon />} variant="contained" onClick={() => setForm(blankForm)}>Add payment</Button>
-        </Stack>
+        <Button startIcon={<AddIcon />} variant="contained" onClick={() => setForm(blankForm)}>Add payment</Button>
       } />
-      <Paper id="payments-print" variant="outlined">
-        {payments.length === 0 ? <EmptyState label="No payments recorded." /> : (
-          <Table size="small">
-            <TableHead><TableRow><TableCell>Date</TableCell><TableCell>Party</TableCell><TableCell>Direction</TableCell><TableCell>Method</TableCell><TableCell align="right">Amount</TableCell><TableCell>Reference</TableCell><TableCell>Status</TableCell><TableCell className="print-exclude" align="right">Actions</TableCell></TableRow></TableHead>
-            <TableBody>{payments.map((payment) => <TableRow key={payment.id} hover><TableCell>{payment.payment_date}</TableCell><TableCell>{payment.party_name}</TableCell><TableCell>{payment.payment_direction}</TableCell><TableCell>{payment.payment_method}</TableCell><TableCell align="right"><MoneyText value={payment.amount_cents} currency={payment.currency} /></TableCell><TableCell>{payment.reference_type ? `${payment.reference_type} #${payment.reference_id}` : "General"}</TableCell><TableCell>{payment.status}</TableCell><TableCell className="print-exclude" align="right"><Button size="small" color="error" startIcon={<CancelIcon />} disabled={payment.status === "cancelled"} onClick={() => setDeleteId(payment.id)}>Cancel</Button></TableCell></TableRow>)}</TableBody>
-          </Table>
-        )}
-      </Paper>
+      {error && !form && deleteId === null ? <Alert severity="error">{error}</Alert> : null}
+      <EnterpriseTable
+        title="Payments"
+        rows={activePayments}
+        columns={columns}
+        rowId={(row) => row.id}
+        loading={isLoading}
+        initialSort={{ column: "date", direction: "desc" }}
+        emptyTitle="No active payments"
+        emptyDescription="Add a payment to begin tracking cash movement and balances."
+        actions={(row) => [
+          { label: "Delete", icon: <DeleteIcon fontSize="small" />, destructive: true, onClick: () => setDeleteId(row.id) }
+        ]}
+      />
 
       <Dialog open={Boolean(form)} onClose={() => setForm(null)} fullWidth maxWidth="sm">
         <DialogTitle>Add payment</DialogTitle>
@@ -130,7 +137,7 @@ export function PaymentsPage() {
         </DialogActions>
       </Dialog>
 
-      <ConfirmDialog open={deleteId !== null} title="Cancel payment" message="The payment remains in history but is removed from balances, reports, cash totals, and any linked invoice." confirmLabel="Cancel payment" error={error} loading={deleteMutation.isPending} onClose={() => setDeleteId(null)} onConfirm={() => deleteId && deleteMutation.mutate(deleteId)} />
+      <ConfirmDialog open={deleteId !== null} title="Delete payment" message="This removes the payment from active balances, reports, cash totals, and any linked invoice while preserving audit history." confirmLabel="Delete" error={error} loading={deleteMutation.isPending} onClose={() => setDeleteId(null)} onConfirm={() => deleteId && deleteMutation.mutate(deleteId)} />
     </Stack>
   );
 }

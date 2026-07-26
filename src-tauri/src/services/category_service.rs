@@ -2,17 +2,12 @@ use rusqlite::{params, Connection};
 
 use crate::{
     models::{Category, CategoryPayload},
-    utils::{
-        audit::insert_audit_log,
-        dates::now_iso,
-        errors::AppError,
-        validation::required,
-    },
+    utils::{audit::insert_audit_log, dates::now_iso, errors::AppError, validation::required},
 };
 
 pub fn list_categories(conn: &Connection) -> Result<Vec<Category>, AppError> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, parent_id, description, is_active, created_at, updated_at
+        "SELECT id, name, parent_id, description, is_active, created_at, updated_at, deleted_at
          FROM categories
          ORDER BY parent_id IS NOT NULL, parent_id, name",
     )?;
@@ -32,7 +27,12 @@ pub fn create_category(
     conn.execute(
         "INSERT INTO categories (name, parent_id, description, is_active, created_at, updated_at)
          VALUES (?1, ?2, ?3, 1, ?4, ?4)",
-        params![payload.name.trim(), payload.parent_id, payload.description, now],
+        params![
+            payload.name.trim(),
+            payload.parent_id,
+            payload.description,
+            now
+        ],
     )?;
     let id = conn.last_insert_rowid();
     let category = get_category(conn, id)?;
@@ -64,7 +64,13 @@ pub fn update_category(
         "UPDATE categories
          SET name = ?1, parent_id = ?2, description = ?3, updated_at = ?4
          WHERE id = ?5",
-        params![payload.name.trim(), payload.parent_id, payload.description, now, id],
+        params![
+            payload.name.trim(),
+            payload.parent_id,
+            payload.description,
+            now,
+            id
+        ],
     )?;
     let category = get_category(conn, id)?;
     insert_audit_log(
@@ -82,10 +88,25 @@ pub fn update_category(
 pub fn archive_category(conn: &Connection, user_id: i64, id: i64) -> Result<(), AppError> {
     ensure_category_exists(conn, id)?;
     conn.execute(
-        "UPDATE categories SET is_active = 0, updated_at = ?1 WHERE id = ?2",
+        "UPDATE categories
+         SET is_active = 0, updated_at = ?1, deleted_at = ?1
+         WHERE id = ?2",
         params![now_iso(), id],
     )?;
     insert_audit_log(conn, user_id, "archive", "categories", id, None, None)?;
+    Ok(())
+}
+
+pub fn restore_category(conn: &Connection, user_id: i64, id: i64) -> Result<(), AppError> {
+    ensure_category_exists(conn, id)?;
+    let now = now_iso();
+    conn.execute(
+        "UPDATE categories
+         SET is_active = 1, updated_at = ?1, deleted_at = NULL
+         WHERE id = ?2",
+        params![now, id],
+    )?;
+    insert_audit_log(conn, user_id, "restore", "categories", id, None, None)?;
     Ok(())
 }
 
@@ -113,7 +134,7 @@ pub fn delete_category(conn: &Connection, user_id: i64, id: i64) -> Result<(), A
 
 pub fn get_category(conn: &Connection, id: i64) -> Result<Category, AppError> {
     conn.query_row(
-        "SELECT id, name, parent_id, description, is_active, created_at, updated_at
+        "SELECT id, name, parent_id, description, is_active, created_at, updated_at, deleted_at
          FROM categories WHERE id = ?1",
         [id],
         map_category,
@@ -125,9 +146,11 @@ pub fn get_category(conn: &Connection, id: i64) -> Result<Category, AppError> {
 }
 
 fn ensure_category_exists(conn: &Connection, id: i64) -> Result<(), AppError> {
-    let count: i64 = conn.query_row("SELECT COUNT(*) FROM categories WHERE id = ?1", [id], |row| {
-        row.get(0)
-    })?;
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM categories WHERE id = ?1",
+        [id],
+        |row| row.get(0),
+    )?;
     if count == 0 {
         Err(AppError::not_found("Category not found."))
     } else {
@@ -144,5 +167,6 @@ fn map_category(row: &rusqlite::Row<'_>) -> rusqlite::Result<Category> {
         is_active: row.get::<_, i64>(4)? == 1,
         created_at: row.get(5)?,
         updated_at: row.get(6)?,
+        deleted_at: row.get(7)?,
     })
 }

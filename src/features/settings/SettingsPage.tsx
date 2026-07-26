@@ -53,7 +53,8 @@ export function SettingsPage() {
       allow_negative_stock: value.allow_negative_stock,
       backup_path: value.backup_path,
       default_tax_rate: value.default_tax_rate,
-      default_profit_method: value.default_profit_method
+      default_profit_method: value.default_profit_method,
+      deleted_retention_days: value.deleted_retention_days
     }),
     onSuccess: async () => {
       setError(null);

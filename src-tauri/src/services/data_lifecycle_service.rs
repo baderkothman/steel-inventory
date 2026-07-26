@@ -51,6 +51,8 @@ VALUES
 
 const BUSINESS_TABLES: &[&str] = &[
     "supplier_settlement_payments",
+    "expense_payments",
+    "walk_in_sales_payments",
     "payments",
     "expenses",
     "sales_invoice_items",
@@ -80,12 +82,7 @@ pub fn clear_all_data(
             "Type CLEAR ALL DATA exactly to confirm the reset.",
         ));
     }
-    verify_admin_credentials(
-        conn,
-        user_id,
-        &payload.admin_email,
-        &payload.admin_password,
-    )?;
+    verify_admin_credentials(conn, user_id, &payload.admin_email, &payload.admin_password)?;
 
     let mut deleted_records = 0_i64;
     for table in BUSINESS_TABLES {
@@ -96,6 +93,8 @@ pub fn clear_all_data(
     let tx = conn.unchecked_transaction()?;
     tx.execute_batch(
         "DELETE FROM supplier_settlement_payments;
+         DELETE FROM expense_payments;
+         DELETE FROM walk_in_sales_payments;
          DELETE FROM payments;
          DELETE FROM expenses;
          DELETE FROM sales_invoice_items;
@@ -115,7 +114,8 @@ pub fn clear_all_data(
          DELETE FROM audit_logs;
          DELETE FROM sqlite_sequence
          WHERE name IN (
-             'supplier_settlement_payments', 'payments', 'expenses',
+             'supplier_settlement_payments', 'expense_payments',
+             'walk_in_sales_payments', 'payments', 'expenses',
              'sales_invoice_items', 'purchase_invoice_items', 'inventory_transactions',
              'stock_levels', 'product_prices', 'sales_invoices', 'purchase_invoices',
              'products', 'customers', 'suppliers', 'categories', 'expense_categories',
@@ -139,7 +139,8 @@ pub fn clear_all_data(
 
     Ok(ClearAllDataResult {
         deleted_records,
-        message: "All business data was cleared. Administrator and company settings were preserved."
-            .to_string(),
+        message:
+            "All business data was cleared. Administrator and company settings were preserved."
+                .to_string(),
     })
 }

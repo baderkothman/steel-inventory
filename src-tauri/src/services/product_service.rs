@@ -1,9 +1,13 @@
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::{
-    models::{InventoryTransactionRow, MovementFilters, ProductFilters, ProductPayload, ProductRow},
+    models::{
+        InventoryTransactionRow, MovementFilters, ProductFilters, ProductPayload, ProductRow,
+    },
     services::{
-        inventory_service::{ensure_stock_row, insert_inventory_transaction, list_product_movement, update_stock},
+        inventory_service::{
+            ensure_stock_row, insert_inventory_transaction, list_product_movement, update_stock,
+        },
         settings_service::get_company_settings,
     },
     utils::{
@@ -21,7 +25,10 @@ pub fn generate_sku(payload: ProductPayload) -> Result<String, AppError> {
     Ok(resolve_sku(&payload, payload.supplier_id.unwrap_or(0)))
 }
 
-pub fn list_products(conn: &Connection, filters: ProductFilters) -> Result<Vec<ProductRow>, AppError> {
+pub fn list_products(
+    conn: &Connection,
+    filters: ProductFilters,
+) -> Result<Vec<ProductRow>, AppError> {
     let search = filters
         .search
         .map(|value| value.trim().to_string())
@@ -42,7 +49,7 @@ pub fn list_products(conn: &Connection, filters: ProductFilters) -> Result<Vec<P
                     WHERE it.product_id = p.id AND it.status = 'active'
                 ), 0),
                 COALESCE(sl.minimum_quantity, 0),
-                p.created_at, p.updated_at
+                p.created_at, p.updated_at, p.deleted_at
          FROM products p
          JOIN categories c ON c.id = p.category_id
          LEFT JOIN suppliers s ON s.id = p.supplier_id
@@ -68,7 +75,12 @@ pub fn list_products(conn: &Connection, filters: ProductFilters) -> Result<Vec<P
     )?;
     let rows = stmt
         .query_map(
-            params![search, filters.category_id, filters.supplier_id, if active_only { 1 } else { 0 }],
+            params![
+                search,
+                filters.category_id,
+                filters.supplier_id,
+                if active_only { 1 } else { 0 }
+            ],
             map_product,
         )?
         .collect::<Result<Vec<_>, _>>()?;
@@ -105,7 +117,9 @@ pub fn create_product(
     let wholesale = payload.wholesale_price_cents.unwrap_or(0);
     let initial_quantity = payload.initial_quantity.unwrap_or(0.0);
     if initial_quantity < 0.0 {
-        return Err(AppError::validation("Initial quantity must be zero or greater."));
+        return Err(AppError::validation(
+            "Initial quantity must be zero or greater.",
+        ));
     }
     let spec_key = spec_key_from_product(&payload);
     let location = clean_optional(payload.location.as_deref());
@@ -243,7 +257,13 @@ pub fn update_product(
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()?;
-    if latest_price != Some((payload.cost_price_cents, payload.selling_price_cents, wholesale)) {
+    if latest_price
+        != Some((
+            payload.cost_price_cents,
+            payload.selling_price_cents,
+            wholesale,
+        ))
+    {
         tx.execute(
             "INSERT INTO product_prices
              (product_id, cost_price_cents, selling_price_cents, wholesale_price_cents, currency, effective_from, created_at)
@@ -274,10 +294,25 @@ pub fn update_product(
 pub fn archive_product(conn: &Connection, user_id: i64, id: i64) -> Result<(), AppError> {
     ensure_product_exists(conn, id)?;
     conn.execute(
-        "UPDATE products SET is_active = 0, updated_at = ?1 WHERE id = ?2",
+        "UPDATE products
+         SET is_active = 0, updated_at = ?1, deleted_at = ?1
+         WHERE id = ?2",
         params![now_iso(), id],
     )?;
     insert_audit_log(conn, user_id, "archive", "products", id, None, None)?;
+    Ok(())
+}
+
+pub fn restore_product(conn: &Connection, user_id: i64, id: i64) -> Result<(), AppError> {
+    ensure_product_exists(conn, id)?;
+    let now = now_iso();
+    conn.execute(
+        "UPDATE products
+         SET is_active = 1, updated_at = ?1, deleted_at = NULL
+         WHERE id = ?2",
+        params![now, id],
+    )?;
+    insert_audit_log(conn, user_id, "restore", "products", id, None, None)?;
     Ok(())
 }
 
@@ -297,7 +332,10 @@ pub fn delete_product(conn: &Connection, user_id: i64, id: i64) -> Result<(), Ap
     }
 
     let tx = conn.unchecked_transaction()?;
-    tx.execute("DELETE FROM inventory_transactions WHERE product_id = ?1", [id])?;
+    tx.execute(
+        "DELETE FROM inventory_transactions WHERE product_id = ?1",
+        [id],
+    )?;
     tx.execute("DELETE FROM stock_levels WHERE product_id = ?1", [id])?;
     tx.execute("DELETE FROM product_prices WHERE product_id = ?1", [id])?;
     tx.execute("DELETE FROM products WHERE id = ?1", [id])?;
@@ -343,14 +381,19 @@ fn validate_product_payload(payload: &ProductPayload) -> Result<(), AppError> {
     required(&payload.unit, "Unit")?;
     non_negative_i64(payload.cost_price_cents, "Cost price")?;
     non_negative_i64(payload.selling_price_cents, "Selling price")?;
-    non_negative_i64(payload.wholesale_price_cents.unwrap_or(0), "Wholesale price")?;
+    non_negative_i64(
+        payload.wholesale_price_cents.unwrap_or(0),
+        "Wholesale price",
+    )?;
     optional_positive(payload.width_mm, "Width")?;
     optional_positive(payload.height_mm, "Height")?;
     optional_positive(payload.diameter_mm, "Diameter")?;
     optional_positive(payload.thickness_mm, "Thickness")?;
     optional_positive(payload.length_mm, "Length")?;
     if payload.minimum_quantity < 0.0 {
-        return Err(AppError::validation("Minimum stock quantity must be zero or greater."));
+        return Err(AppError::validation(
+            "Minimum stock quantity must be zero or greater.",
+        ));
     }
     Ok(())
 }
@@ -367,7 +410,11 @@ fn resolve_sku(payload: &ProductPayload, supplier_id: i64) -> String {
         .unwrap_or_else(|| format!("{}-S{supplier_id}", generate_sku_from_product(payload)))
 }
 
-fn ensure_unique_sku(conn: &Connection, sku: &str, excluded_id: Option<i64>) -> Result<(), AppError> {
+fn ensure_unique_sku(
+    conn: &Connection,
+    sku: &str,
+    excluded_id: Option<i64>,
+) -> Result<(), AppError> {
     let count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM products WHERE sku = ?1 AND (?2 IS NULL OR id <> ?2)",
         params![sku, excluded_id],
@@ -381,9 +428,10 @@ fn ensure_unique_sku(conn: &Connection, sku: &str, excluded_id: Option<i64>) -> 
 }
 
 fn ensure_product_exists(conn: &Connection, id: i64) -> Result<(), AppError> {
-    let count: i64 = conn.query_row("SELECT COUNT(*) FROM products WHERE id = ?1", [id], |row| {
-        row.get(0)
-    })?;
+    let count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM products WHERE id = ?1", [id], |row| {
+            row.get(0)
+        })?;
     if count == 0 {
         Err(AppError::not_found("Product not found."))
     } else {
@@ -408,7 +456,9 @@ fn resolve_supplier_id(conn: &Connection, supplier_id: Option<i64>) -> Result<i6
             |row| row.get(0),
         )?;
         if exists == 0 {
-            return Err(AppError::validation("Selected supplier was not found or is archived."));
+            return Err(AppError::validation(
+                "Selected supplier was not found or is archived.",
+            ));
         }
         return Ok(id);
     }
@@ -474,7 +524,11 @@ pub fn list_supplier_variants(
     )?;
     let rows = stmt
         .query_map(
-            params![search, filters.category_id, if in_stock_only { 1 } else { 0 }],
+            params![
+                search,
+                filters.category_id,
+                if in_stock_only { 1 } else { 0 }
+            ],
             |row| {
                 Ok(crate::models::SupplierVariantRow {
                     spec_key: row.get(0)?,
@@ -528,5 +582,6 @@ fn map_product(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProductRow> {
         minimum_quantity: row.get(26)?,
         created_at: row.get(27)?,
         updated_at: row.get(28)?,
+        deleted_at: row.get(29)?,
     })
 }

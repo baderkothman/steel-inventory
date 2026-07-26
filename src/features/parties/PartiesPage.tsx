@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 import {
   Alert,
   Box,
@@ -8,17 +8,10 @@ import {
   DialogContent,
   DialogTitle,
   Drawer,
-  Paper,
   Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableRow,
   TextField
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
-import ArchiveIcon from "@mui/icons-material/Archive";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
 import ReceiptLongIcon from "@mui/icons-material/ReceiptLong";
@@ -27,12 +20,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MoneyText } from "../../components/MoneyText";
 import { PageHeader } from "../../components/PageHeader";
 import { ConfirmDialog } from "../../components/feedback/ConfirmDialog";
-import { EmptyState, LoadingState } from "../../components/feedback/PageState";
-import { PrintButton } from "../../components/print/PrintButton";
-import { customerApi, supplierApi } from "../../lib/api";
-import { fromCents, toCents } from "../../lib/formatters";
+import { LoadingState } from "../../components/feedback/PageState";
+import { EnterpriseTable, type TableColumn } from "../../components/table/EnterpriseTable";
+import { customerApi, settingsApi, supplierApi } from "../../lib/api";
+import { fromCents, money, toCents } from "../../lib/formatters";
 import { normalizeError } from "../../lib/tauri";
-import type { Party, PartyPayload } from "../../types/party";
+import type { Party, PartyPayload, StatementRow } from "../../types/party";
 
 type Kind = "supplier" | "customer";
 type PartyForm = Omit<PartyPayload, "opening_balance_cents"> & {
@@ -62,18 +55,24 @@ export function CustomersPage() {
 function PartiesPage({ kind }: { kind: Kind }) {
   const api = kind === "supplier" ? supplierApi : customerApi;
   const queryClient = useQueryClient();
-  const [search, setSearch] = useState("");
   const [form, setForm] = useState<PartyForm | null>(null);
-  const [archiveId, setArchiveId] = useState<number | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [statementParty, setStatementParty] = useState<Party | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const { data = [], isLoading } = useQuery({
-    queryKey: [kind, search],
-    queryFn: () => api.list({ search: search || null, active_only: false })
+    queryKey: [kind],
+    queryFn: () => api.list({ active_only: true })
   });
+  const { data: settings } = useQuery({ queryKey: ["settings"], queryFn: settingsApi.get });
+  const activeRows = useMemo(() => data.filter((row) => row.is_active), [data]);
+  const columns = useMemo<TableColumn<Party>[]>(() => [
+    { id: "name", label: "Name", value: (row) => row.name, minWidth: 180 },
+    { id: "company", label: "Company", value: (row) => row.company_name ?? "", minWidth: 180 },
+    { id: "phone", label: "Phone", value: (row) => row.phone ?? "", minWidth: 140 },
+    { id: "balance", label: "Balance", value: (row) => money(row.balance_cents, settings?.default_currency), render: (row) => <MoneyText value={row.balance_cents} currency={settings?.default_currency} />, align: "right", minWidth: 130 }
+  ], [settings?.default_currency]);
 
   const saveMutation = useMutation({
     mutationFn: (value: PartyForm) => (value.id ? api.update(value.id, formToPayload(value)) : api.create(formToPayload(value))),
@@ -86,15 +85,8 @@ function PartiesPage({ kind }: { kind: Kind }) {
     onError: (err) => setError(normalizeError(err).message)
   });
 
-  const archiveMutation = useMutation({
-    mutationFn: (id: number) => api.archive(id),
-    onSuccess: async () => {
-      setArchiveId(null);
-      await queryClient.invalidateQueries({ queryKey: [kind] });
-    }
-  });
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => api.delete(id),
+    mutationFn: (id: number) => api.archive(id),
     onSuccess: async () => {
       setDeleteId(null);
       setDeleteError(null);
@@ -119,44 +111,25 @@ function PartiesPage({ kind }: { kind: Kind }) {
         title={title}
         description={`Manage ${kind} profiles, opening balances, payments, and statements.`}
         actions={
-          <Stack direction="row" spacing={1}>
-            <PrintButton targetId={`${kind}s-print`} title={title} subtitle={`${data.length} records`} disabled={!data.length} />
-            <Button startIcon={<AddIcon />} variant="contained" onClick={() => setForm(blankForm)}>Add {kind}</Button>
-          </Stack>
+          <Button startIcon={<AddIcon />} variant="contained" onClick={() => setForm(blankForm)}>Add {kind}</Button>
         }
       />
+      {deleteError && deleteId === null ? <Alert severity="error">{deleteError}</Alert> : null}
 
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <TextField label="Search" value={search} onChange={(event) => setSearch(event.target.value)} sx={{ minWidth: 280 }} />
-      </Paper>
-
-      <Paper id={`${kind}s-print`} variant="outlined">
-        {data.length === 0 ? <EmptyState label={`No ${kind}s found.`} /> : (
-          <Table size="small">
-            <TableHead><TableRow><TableCell>Name</TableCell><TableCell>Company</TableCell><TableCell>Phone</TableCell><TableCell align="right">Balance</TableCell><TableCell>Status</TableCell><TableCell className="print-exclude" align="right">Actions</TableCell></TableRow></TableHead>
-            <TableBody>
-              {data.map((party) => (
-                <TableRow key={party.id} hover>
-                  <TableCell>{party.name}</TableCell>
-                  <TableCell>{party.company_name}</TableCell>
-                  <TableCell>{party.phone}</TableCell>
-                  <TableCell align="right"><MoneyText value={party.balance_cents} /></TableCell>
-                  <TableCell>{party.is_active ? "Active" : "Archived"}</TableCell>
-                  <TableCell className="print-exclude" align="right">
-                    <Button size="small" startIcon={<EditIcon />} onClick={() => setForm(partyToForm(party))}>Edit</Button>
-                    <Button size="small" startIcon={<ReceiptLongIcon />} onClick={() => setStatementParty(party)}>Statement</Button>
-                    <Button size="small" color="warning" startIcon={<ArchiveIcon />} disabled={!party.is_active} onClick={() => setArchiveId(party.id)}>Archive</Button>
-                    <Button size="small" color="error" startIcon={<DeleteIcon />} onClick={() => {
-                      setDeleteError(null);
-                      setDeleteId(party.id);
-                    }}>Delete</Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </Paper>
+      <EnterpriseTable
+        title={title}
+        rows={activeRows}
+        columns={columns}
+        rowId={(row) => row.id}
+        loading={isLoading}
+        emptyTitle={`No active ${kind}s`}
+        emptyDescription={`Add a ${kind} to begin tracking invoices and balances.`}
+        actions={(row) => [
+          { label: "Edit", icon: <EditIcon fontSize="small" />, onClick: () => setForm(partyToForm(row)) },
+          { label: "View statement", icon: <ReceiptLongIcon fontSize="small" />, onClick: () => setStatementParty(row) },
+          { label: "Delete", icon: <DeleteIcon fontSize="small" />, destructive: true, onClick: () => setDeleteId(row.id) }
+        ]}
+      />
 
       <Dialog open={Boolean(form)} onClose={() => setForm(null)} fullWidth maxWidth="sm">
         <DialogTitle>{form?.id ? `Edit ${kind}` : `Add ${kind}`}</DialogTitle>
@@ -181,25 +154,17 @@ function PartiesPage({ kind }: { kind: Kind }) {
 
       <StatementDrawer kind={kind} party={statementParty} onClose={() => setStatementParty(null)} />
       <ConfirmDialog
-        open={archiveId !== null}
-        title={`Archive ${kind}`}
-        message={`Archived ${kind}s stay available in invoice history and statements.`}
-        confirmLabel="Archive"
-        onClose={() => setArchiveId(null)}
-        onConfirm={() => archiveId && archiveMutation.mutate(archiveId)}
-      />
-      <ConfirmDialog
         open={deleteId !== null}
-        title={`Permanently delete ${kind}`}
-        message={`Only a ${kind} with no products, invoices, payments, or other financial history can be deleted. Otherwise, archive it instead.`}
-        confirmLabel="Delete permanently"
+        title={`Delete ${kind}`}
+        message={`This removes the ${kind} from active lists while preserving invoices, payments, and statements.`}
+        confirmLabel="Delete"
         error={deleteError}
         loading={deleteMutation.isPending}
         onClose={() => {
           setDeleteId(null);
           setDeleteError(null);
         }}
-        onConfirm={() => deleteId && deleteMutation.mutate(deleteId)}
+        onConfirm={() => deleteId !== null && deleteMutation.mutate(deleteId)}
       />
     </Stack>
   );
@@ -212,21 +177,34 @@ function StatementDrawer({ kind, party, onClose }: { kind: Kind; party: Party | 
     queryFn: () => api.statement(party!.id),
     enabled: Boolean(party)
   });
+  const statementColumns = useMemo<TableColumn<StatementRow>[]>(() => [
+    { id: "date", label: "Date", value: (row) => row.date, width: 110 },
+    { id: "type", label: "Type", value: (row) => row.entry_type, minWidth: 140 },
+    { id: "reference", label: "Reference", value: (row) => row.reference, minWidth: 150 },
+    { id: "debit", label: "Debit", value: (row) => money(row.debit_cents), render: (row) => <MoneyText value={row.debit_cents} />, align: "right" },
+    { id: "credit", label: "Credit", value: (row) => money(row.credit_cents), render: (row) => <MoneyText value={row.credit_cents} />, align: "right" },
+    { id: "balance", label: "Balance", value: (row) => money(row.balance_cents), render: (row) => <MoneyText value={row.balance_cents} />, align: "right" }
+  ], []);
 
   return (
     <Drawer anchor="right" open={Boolean(party)} onClose={onClose}>
-      <Box sx={{ width: 680, p: 3 }}>
+      <Box sx={{ width: { xs: "100vw", md: 760 }, maxWidth: "100vw", p: { xs: 2, md: 3 } }}>
         <PageHeader
           title="Statement"
           description={party?.name}
-          actions={<PrintButton targetId={`${kind}-statement-print`} title={`${kind === "supplier" ? "Supplier" : "Customer"} Statement`} subtitle={party?.name} disabled={!data.length} />}
         />
-        {isLoading ? <LoadingState /> : data.length === 0 ? <EmptyState label="No statement rows." /> : (
-          <Table id={`${kind}-statement-print`} size="small">
-            <TableHead><TableRow><TableCell>Date</TableCell><TableCell>Type</TableCell><TableCell>Reference</TableCell><TableCell align="right">Debit</TableCell><TableCell align="right">Credit</TableCell><TableCell align="right">Balance</TableCell></TableRow></TableHead>
-            <TableBody>{data.map((row, index) => <TableRow key={`${row.reference}-${index}`}><TableCell>{row.date}</TableCell><TableCell>{row.entry_type}</TableCell><TableCell>{row.reference}</TableCell><TableCell align="right"><MoneyText value={row.debit_cents} /></TableCell><TableCell align="right"><MoneyText value={row.credit_cents} /></TableCell><TableCell align="right"><MoneyText value={row.balance_cents} /></TableCell></TableRow>)}</TableBody>
-          </Table>
-        )}
+        <Box sx={{ mt: 2 }}>
+          <EnterpriseTable
+            title={`${kind === "supplier" ? "Supplier" : "Customer"} Statement — ${party?.name ?? ""}`}
+            rows={data}
+            columns={statementColumns}
+            rowId={(row) => `${row.reference}-${row.date}-${row.balance_cents}`}
+            loading={isLoading}
+            searchable={false}
+            emptyTitle="No statement activity"
+            emptyDescription="Active invoices and payments will appear here."
+          />
+        </Box>
       </Box>
     </Drawer>
   );

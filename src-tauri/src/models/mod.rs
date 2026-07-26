@@ -36,6 +36,7 @@ pub struct Category {
     pub is_active: bool,
     pub created_at: String,
     pub updated_at: String,
+    pub deleted_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -76,6 +77,7 @@ pub struct ProductRow {
     pub minimum_quantity: f64,
     pub created_at: String,
     pub updated_at: String,
+    pub deleted_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -164,6 +166,7 @@ pub struct SettlementPaymentRow {
     pub reference: Option<String>,
     pub notes: Option<String>,
     pub created_at: String,
+    pub deleted_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -171,6 +174,7 @@ pub struct SettlementFilters {
     pub date_from: Option<String>,
     pub date_to: Option<String>,
     pub supplier_id: Option<i64>,
+    pub active_only: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,6 +192,7 @@ pub struct InventoryTransactionRow {
     pub notes: Option<String>,
     pub status: String,
     pub created_at: String,
+    pub deleted_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -221,6 +226,7 @@ pub struct PartyRow {
     pub balance_cents: i64,
     pub created_at: String,
     pub updated_at: String,
+    pub deleted_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -315,6 +321,7 @@ pub struct InvoiceFilters {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct InvoiceListRow {
     pub id: i64,
+    pub party_id: Option<i64>,
     pub invoice_number: String,
     pub invoice_date: String,
     pub party_name: String,
@@ -329,6 +336,7 @@ pub struct InvoiceListRow {
     pub status: String,
     pub notes: Option<String>,
     pub created_at: String,
+    pub deleted_at: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -363,6 +371,7 @@ pub struct ExpensePayload {
     pub expense_category_id: i64,
     pub title: String,
     pub amount_cents: i64,
+    pub paid_cents: i64,
     pub currency: String,
     pub expense_date: String,
     pub payment_method: String,
@@ -384,6 +393,9 @@ pub struct ExpenseRow {
     pub category_name: String,
     pub title: String,
     pub amount_cents: i64,
+    pub paid_cents: i64,
+    pub remaining_cents: i64,
+    pub payment_status: String,
     pub currency: String,
     pub expense_date: String,
     pub payment_method: String,
@@ -391,6 +403,27 @@ pub struct ExpenseRow {
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
+    pub deleted_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct InstallmentPaymentPayload {
+    pub amount_cents: i64,
+    pub payment_method: String,
+    pub payment_date: String,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct InstallmentPaymentRow {
+    pub id: i64,
+    pub amount_cents: i64,
+    pub currency: String,
+    pub payment_method: String,
+    pub payment_date: String,
+    pub notes: Option<String>,
+    pub status: String,
+    pub created_at: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -431,6 +464,7 @@ pub struct PaymentRow {
     pub notes: Option<String>,
     pub status: String,
     pub created_at: String,
+    pub deleted_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -448,6 +482,7 @@ pub struct CompanySettings {
     pub backup_path: Option<String>,
     pub default_tax_rate: f64,
     pub default_profit_method: String,
+    pub deleted_retention_days: i64,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -466,6 +501,7 @@ pub struct CompanySettingsPayload {
     pub backup_path: Option<String>,
     pub default_tax_rate: f64,
     pub default_profit_method: String,
+    pub deleted_retention_days: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

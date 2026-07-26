@@ -1,28 +1,21 @@
 import { useMemo, useState } from "react";
 import {
   Button,
-  Box,
   MenuItem,
   Paper,
   Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableRow,
   TextField
 } from "@mui/material";
-import DownloadIcon from "@mui/icons-material/Download";
 import PrintIcon from "@mui/icons-material/Print";
 import { useQuery } from "@tanstack/react-query";
 
 import { PageHeader } from "../../components/PageHeader";
 import { PrintDialog } from "../../components/print/PrintDialog";
-import { PrintButton } from "../../components/print/PrintButton";
-import { EmptyState, LoadingState } from "../../components/feedback/PageState";
+import { EnterpriseTable, type TableColumn } from "../../components/table/EnterpriseTable";
 import { reportOptions } from "../../lib/constants";
-import { money, quantity, today } from "../../lib/formatters";
+import { money, today } from "../../lib/formatters";
 import { categoryApi, reportApi, settingsApi, supplierApi } from "../../lib/api";
+import type { CompanySettings } from "../../types/common";
 import type { ReportFilters, ReportRow } from "../../types/report";
 
 type ReportKey = (typeof reportOptions)[number]["value"];
@@ -58,30 +51,27 @@ export function ReportsPage() {
   });
 
   const columns = useMemo(() => Array.from(new Set(data.flatMap((row) => Object.keys(row)))), [data]);
+  const reportTitle = reportOptions.find((option) => option.value === report)?.label ?? "Report";
+  const tableRows = useMemo(() => data.map((row, index) => ({ id: index, data: row })), [data]);
+  const tableColumns = useMemo<TableColumn<{ id: number; data: ReportRow }>[]>(() =>
+    columns.map((column) => ({
+      id: column,
+      label: label(column),
+      value: (row) => formatCell(column, row.data[column], settings?.default_currency ?? "USD"),
+      align: numericReportColumn(column) ? "right" : "left",
+      minWidth: numericReportColumn(column) ? 110 : 140
+    })),
+  [columns, settings?.default_currency]);
 
   function printStockCount() {
     const supplierName = filters.supplier_id ? suppliers.find((s) => s.id === filters.supplier_id)?.name : "All suppliers";
     const categoryName = filters.category_id ? categories.find((c) => c.id === filters.category_id)?.name : "All categories";
-    setCountSheetHtml(buildStockCountSheet(data, supplierName ?? "All suppliers", categoryName ?? "All categories"));
-  }
-
-  function exportCsv() {
-    if (!settings) return;
-    const csv = [
-      columns.map((column) => csvCell(label(column))).join(","),
-      ...data.map((row) =>
-        columns
-          .map((column) => csvCell(formatCell(column, row[column], settings.default_currency)))
-          .join(",")
-      )
-    ].join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${report}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
+    setCountSheetHtml(buildStockCountSheet(
+      data,
+      supplierName ?? "All suppliers",
+      categoryName ?? "All categories",
+      settings
+    ));
   }
 
   return (
@@ -90,19 +80,9 @@ export function ReportsPage() {
         title="Reports"
         description="Generate operational, profit, stock, debt, expense, payment, and inventory reports."
         actions={
-          <Stack direction="row" spacing={1}>
-            {report === "stock_count" ? (
-              <Button startIcon={<PrintIcon />} variant="outlined" disabled={!data.length} onClick={printStockCount}>Print count sheet</Button>
-            ) : (
-              <PrintButton
-                targetId="report-table-print"
-                title={reportOptions.find((option) => option.value === report)?.label ?? "Report"}
-                disabled={!data.length || !settings}
-                contentHasHeader={report === "stock"}
-              />
-            )}
-            <Button startIcon={<DownloadIcon />} variant="contained" disabled={!data.length || !settings} onClick={exportCsv}>Export CSV</Button>
-          </Stack>
+          report === "stock_count"
+            ? <Button startIcon={<PrintIcon />} variant="outlined" disabled={!data.length} onClick={printStockCount}>Print count sheet</Button>
+            : null
         }
       />
 
@@ -139,24 +119,17 @@ export function ReportsPage() {
         </Stack>
       </Paper>
 
-      <Paper id="report-table-print" variant="outlined">
-        {isLoading || isSettingsLoading ? <LoadingState label="Loading report" /> : data.length === 0 ? <EmptyState label="No rows for this report." /> : report === "stock" && settings ? (
-          <StockRemainingReport
-            rows={data}
-            currency={settings.default_currency}
-            categoryName={
-              filters.category_id
-                ? categories.find((category) => category.id === filters.category_id)?.name
-                : undefined
-            }
-          />
-        ) : settings ? (
-          <Table size="small">
-            <TableHead><TableRow>{columns.map((column) => <TableCell key={column}>{label(column)}</TableCell>)}</TableRow></TableHead>
-            <TableBody>{data.map((row, index) => <TableRow key={index}>{columns.map((column) => <TableCell key={column}>{formatCell(column, row[column], settings.default_currency)}</TableCell>)}</TableRow>)}</TableBody>
-          </Table>
-        ) : null}
-      </Paper>
+      <EnterpriseTable
+        title={reportTitle}
+        filename={report}
+        rows={tableRows}
+        columns={tableColumns}
+        rowId={(row) => row.id}
+        loading={isLoading || isSettingsLoading}
+        emptyTitle="No report results"
+        emptyDescription="Adjust the filters or select another report."
+        initialSort={columns.includes("date") ? { column: "date", direction: "desc" } : undefined}
+      />
 
       <PrintDialog open={Boolean(countSheetHtml)} html={countSheetHtml} onClose={() => setCountSheetHtml("")} />
     </Stack>
@@ -196,153 +169,13 @@ function formatCell(column: string, value: unknown, currency: string) {
   return String(value);
 }
 
-type StockRow = {
-  category: string;
-  productType: string;
-  productName: string;
-  size: string;
-  thicknessMm: number | null;
-  sellingPriceCents: number;
-  remainingQuantity: number;
-  unit: string;
-};
-
-type StockGroup = {
-  key: string;
-  category: string;
-  productType: string;
-  rows: StockRow[];
-};
-
-function StockRemainingReport({
-  rows,
-  currency,
-  categoryName
-}: {
-  rows: ReportRow[];
-  currency: string;
-  categoryName?: string;
-}) {
-  const groups = groupStockRows(rows);
-  const generated = new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short"
-  }).format(new Date());
-
-  return (
-    <Box className="stock-report">
-      <header className="stock-report__header">
-        <div>
-          <p className="stock-report__eyebrow">Inventory availability</p>
-          <h1>Stock remaining</h1>
-          <p className="stock-report__subtitle">
-            {categoryName ? `${categoryName} · ` : ""}
-            Products are grouped by category and product type.
-          </p>
-        </div>
-        <dl className="stock-report__summary">
-          <div><dt>Products</dt><dd>{rows.length}</dd></div>
-          <div><dt>Groups</dt><dd>{groups.length}</dd></div>
-          <div><dt>Updated</dt><dd>{generated}</dd></div>
-        </dl>
-      </header>
-
-      <div className="stock-report__groups">
-        {groups.map((group) => (
-          <section className="stock-group" key={group.key}>
-            <div className="stock-group__heading">
-              <div>
-                <span>{group.category}</span>
-                <h2>{titleCase(group.productType)}</h2>
-              </div>
-              <p>{group.rows.length} {group.rows.length === 1 ? "product" : "products"}</p>
-            </div>
-            <div className="stock-group__table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Product name</th>
-                    <th>Size</th>
-                    <th>Thickness</th>
-                    <th className="num">Selling price</th>
-                    <th className="num">Remaining stock</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {group.rows.map((row, index) => (
-                    <tr key={`${group.key}-${row.productName}-${row.size}-${row.thicknessMm ?? ""}-${index}`}>
-                      <td className="product-name">{row.productName}</td>
-                      <td>{row.size || "—"}</td>
-                      <td>{row.thicknessMm === null ? "—" : `${quantity(row.thicknessMm)} mm`}</td>
-                      <td className="num price">{money(row.sellingPriceCents, currency)}</td>
-                      <td className="num stock-quantity">
-                        <strong>{quantity(row.remainingQuantity)}</strong>
-                        <span>{row.unit}</span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        ))}
-      </div>
-    </Box>
-  );
-}
-
-function groupStockRows(rows: ReportRow[]): StockGroup[] {
-  const groups = new Map<string, StockGroup>();
-  for (const raw of rows) {
-    const row: StockRow = {
-      category: textValue(raw.category, "Uncategorized"),
-      productType: textValue(raw.product_type, "Other"),
-      productName: textValue(raw.product_name, "Unnamed product"),
-      size: textValue(raw.size),
-      thicknessMm: numberValue(raw.thickness_mm),
-      sellingPriceCents: numberValue(raw.selling_price_cents) ?? 0,
-      remainingQuantity: numberValue(raw.remaining_quantity) ?? 0,
-      unit: textValue(raw.unit)
-    };
-    const key = `${row.category}\u0000${row.productType}`;
-    const group = groups.get(key) ?? {
-      key,
-      category: row.category,
-      productType: row.productType,
-      rows: []
-    };
-    group.rows.push(row);
-    groups.set(key, group);
-  }
-
-  return [...groups.values()]
-    .map((group) => ({
-      ...group,
-      rows: group.rows.sort((left, right) =>
-        left.productName.localeCompare(right.productName, undefined, { numeric: true })
-      )
-    }))
-    .sort((left, right) =>
-      left.category.localeCompare(right.category, undefined, { numeric: true }) ||
-      left.productType.localeCompare(right.productType, undefined, { numeric: true })
-    );
-}
-
-function textValue(value: unknown, fallback = "") {
-  return typeof value === "string" && value.trim() ? value.trim() : fallback;
-}
-
-function numberValue(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function titleCase(value: string) {
-  return value.replace(/[_-]/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-function csvCell(value: unknown) {
-  const text = value === null || value === undefined ? "" : String(value);
-  return `"${text.replace(/"/g, '""')}"`;
+function numericReportColumn(column: string) {
+  return column.endsWith("_cents")
+    || column.includes("quantity")
+    || column.includes("amount")
+    || column.includes("total")
+    || column.includes("profit")
+    || column.includes("balance");
 }
 
 function escapeHtml(value: unknown) {
@@ -354,7 +187,12 @@ function escapeHtml(value: unknown) {
 
 /** Builds a print-friendly physical stock-count sheet with blank counted/difference
  *  columns and prepared-by / checked-by fields for manual entry on paper. */
-function buildStockCountSheet(rows: ReportRow[], supplierName: string, categoryName: string) {
+function buildStockCountSheet(
+  rows: ReportRow[],
+  supplierName: string,
+  categoryName: string,
+  settings?: CompanySettings
+) {
   const generated = new Date().toISOString().slice(0, 10);
   const body = rows
     .map(
@@ -372,21 +210,23 @@ function buildStockCountSheet(rows: ReportRow[], supplierName: string, categoryN
     .join("");
   return `<!doctype html><html><head><meta charset="utf-8"><title>Stock Count Sheet</title>
   <style>
-    body{font-family:Arial,sans-serif;color:#16202a;margin:24px}
+    *{box-sizing:border-box}body{font-family:Inter,"Segoe UI",Arial,sans-serif;color:#16202a;margin:14mm 11mm 16mm}
     h1{font-size:20px;margin:0 0 4px}
     .meta{font-size:12px;color:#5b6773;margin-bottom:16px}
     .meta span{margin-right:24px}
-    table{width:100%;border-collapse:collapse;margin-top:8px}
+    table{width:100%;border-collapse:collapse;margin-top:8px}thead{display:table-header-group}tr{break-inside:avoid;page-break-inside:avoid}
     th,td{border:1px solid #b8c2cc;padding:6px 8px;font-size:12px;text-align:left}
     th{background:#f3f6f8}
     td.num{text-align:right}
     td.blank{height:24px;min-width:70px}
     .sign{display:flex;justify-content:space-between;margin-top:40px;font-size:13px}
     .sign div{width:45%;border-top:1px solid #16202a;padding-top:6px}
-    @media print{button{display:none}}
+    footer{display:none}@page{size:landscape;margin:14mm 11mm 16mm}
+    @media print{button{display:none}body{margin:0}footer{display:block;position:fixed;left:0;right:0;bottom:-7mm;color:#687680;font-size:9px}.page{float:right}.page:after{content:counter(page)}}
   </style></head><body>
   <button onclick="window.print()">Print / Save PDF</button>
   <h1>Physical Stock Count Sheet</h1>
+  ${settings ? `<div class="meta"><strong>${escapeHtml(settings.company_name)}</strong>${settings.address ? ` · ${escapeHtml(settings.address)}` : ""}${settings.phone ? ` · ${escapeHtml(settings.phone)}` : ""}</div>` : ""}
   <div class="meta">
     <span><strong>Supplier:</strong> ${escapeHtml(supplierName)}</span>
     <span><strong>Category:</strong> ${escapeHtml(categoryName)}</span>
@@ -401,5 +241,6 @@ function buildStockCountSheet(rows: ReportRow[], supplierName: string, categoryN
     <tbody>${body || '<tr><td colspan="8">No products.</td></tr>'}</tbody>
   </table>
   <div class="sign"><div>Prepared by: ______________________</div><div>Checked by: ______________________</div></div>
+  <footer><span>Physical Stock Count Sheet</span><span class="page">Page </span></footer>
   </body></html>`;
 }

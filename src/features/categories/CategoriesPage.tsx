@@ -7,25 +7,18 @@ import {
   DialogContent,
   DialogTitle,
   MenuItem,
-  Paper,
   Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableRow,
   TextField
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
-import ArchiveIcon from "@mui/icons-material/Archive";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ConfirmDialog } from "../../components/feedback/ConfirmDialog";
-import { EmptyState, LoadingState } from "../../components/feedback/PageState";
+import { LoadingState } from "../../components/feedback/PageState";
 import { PageHeader } from "../../components/PageHeader";
-import { PrintButton } from "../../components/print/PrintButton";
+import { EnterpriseTable, type TableColumn } from "../../components/table/EnterpriseTable";
 import { categoryApi } from "../../lib/api";
 import { normalizeError } from "../../lib/tauri";
 import type { Category } from "../../types/common";
@@ -43,13 +36,17 @@ export function CategoriesPage() {
   const queryClient = useQueryClient();
   const { data = [], isLoading } = useQuery({ queryKey: ["categories"], queryFn: categoryApi.list });
   const [form, setForm] = useState<FormState | null>(null);
-  const [archiveId, setArchiveId] = useState<number | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const activeCategories = useMemo(() => data.filter((category) => category.is_active), [data]);
   const categoryNames = useMemo(() => new Map(data.map((category) => [category.id, category.name])), [data]);
+  const columns = useMemo<TableColumn<Category>[]>(() => [
+    { id: "name", label: "Name", value: (row) => row.name, minWidth: 180 },
+    { id: "parent", label: "Parent", value: (row) => row.parent_id ? categoryNames.get(row.parent_id) ?? "Unknown" : "Root", minWidth: 140 },
+    { id: "description", label: "Description", value: (row) => row.description ?? "", minWidth: 240 }
+  ], [categoryNames]);
 
   const saveMutation = useMutation({
     mutationFn: (value: FormState) =>
@@ -72,15 +69,8 @@ export function CategoriesPage() {
     onError: (err) => setError(normalizeError(err).message)
   });
 
-  const archiveMutation = useMutation({
-    mutationFn: (id: number) => categoryApi.archive(id),
-    onSuccess: async () => {
-      setArchiveId(null);
-      await queryClient.invalidateQueries({ queryKey: ["categories"] });
-    }
-  });
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => categoryApi.delete(id),
+    mutationFn: (id: number) => categoryApi.archive(id),
     onSuccess: async () => {
       setDeleteId(null);
       setDeleteError(null);
@@ -105,68 +95,23 @@ export function CategoriesPage() {
       <PageHeader
         title="Categories"
         description="Manage parent and child product categories."
-        actions={
-          <Stack direction="row" spacing={1}>
-            <PrintButton targetId="categories-print" title="Product Categories" disabled={!data.length} />
-            <Button startIcon={<AddIcon />} variant="contained" onClick={() => setForm(emptyForm)}>
-              Add category
-            </Button>
-          </Stack>
-        }
+        actions={<Button startIcon={<AddIcon />} variant="contained" onClick={() => setForm(emptyForm)}>Add category</Button>}
       />
+      {deleteError && deleteId === null ? <Alert severity="error">{deleteError}</Alert> : null}
 
-      <Paper id="categories-print" variant="outlined">
-        {data.length === 0 ? (
-          <EmptyState label="No categories found." />
-        ) : (
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>Name</TableCell>
-                <TableCell>Parent</TableCell>
-                <TableCell>Description</TableCell>
-                <TableCell>Status</TableCell>
-                <TableCell className="print-exclude" align="right">Actions</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {data.map((category) => (
-                <TableRow key={category.id} hover>
-                  <TableCell>{category.name}</TableCell>
-                  <TableCell>{category.parent_id ? categoryNames.get(category.parent_id) : "Root"}</TableCell>
-                  <TableCell>{category.description}</TableCell>
-                  <TableCell>{category.is_active ? "Active" : "Archived"}</TableCell>
-                  <TableCell className="print-exclude" align="right">
-                    <Button size="small" startIcon={<EditIcon />} onClick={() => setForm(categoryToForm(category))}>
-                      Edit
-                    </Button>
-                    <Button
-                      size="small"
-                      color="warning"
-                      startIcon={<ArchiveIcon />}
-                      disabled={!category.is_active}
-                      onClick={() => setArchiveId(category.id)}
-                    >
-                      Archive
-                    </Button>
-                    <Button
-                      size="small"
-                      color="error"
-                      startIcon={<DeleteIcon />}
-                      onClick={() => {
-                        setDeleteError(null);
-                        setDeleteId(category.id);
-                      }}
-                    >
-                      Delete
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </Paper>
+      <EnterpriseTable
+        title="Product Categories"
+        rows={activeCategories}
+        columns={columns}
+        rowId={(row) => row.id}
+        loading={isLoading}
+        emptyTitle="No active categories"
+        emptyDescription="Add a category to organize your product catalog."
+        actions={(row) => [
+          { label: "Edit", icon: <EditIcon fontSize="small" />, onClick: () => setForm(categoryToForm(row)) },
+          { label: "Delete", icon: <DeleteIcon fontSize="small" />, destructive: true, onClick: () => setDeleteId(row.id) }
+        ]}
+      />
 
       <Dialog open={Boolean(form)} onClose={() => setForm(null)} fullWidth maxWidth="sm">
         <DialogTitle>{form?.id ? "Edit category" : "Add category"}</DialogTitle>
@@ -221,25 +166,17 @@ export function CategoriesPage() {
       </Dialog>
 
       <ConfirmDialog
-        open={archiveId !== null}
-        title="Archive category"
-        message="Archived categories stay in history but are hidden from active workflows."
-        confirmLabel="Archive"
-        onClose={() => setArchiveId(null)}
-        onConfirm={() => archiveId && archiveMutation.mutate(archiveId)}
-      />
-      <ConfirmDialog
         open={deleteId !== null}
-        title="Permanently delete category"
-        message="Only an unused category can be deleted. Categories containing products or child categories must be archived instead."
-        confirmLabel="Delete permanently"
+        title="Delete category"
+        message="This removes the category from active lists while preserving existing transaction history."
+        confirmLabel="Delete"
         error={deleteError}
         loading={deleteMutation.isPending}
         onClose={() => {
           setDeleteId(null);
           setDeleteError(null);
         }}
-        onConfirm={() => deleteId && deleteMutation.mutate(deleteId)}
+        onConfirm={() => deleteId !== null && deleteMutation.mutate(deleteId)}
       />
     </Stack>
   );

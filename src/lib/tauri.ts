@@ -5,11 +5,17 @@ export type AppError = {
   message: string;
 };
 
+export const SESSION_EXPIRED_EVENT = "steel-inventory:session-expired";
+
 export async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   try {
     return await invoke<T>(command, args);
   } catch (error) {
-    throw normalizeError(error);
+    const normalized = normalizeError(error);
+    if (normalized.code === "UNAUTHORIZED") {
+      window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+    }
+    throw normalized;
   }
 }
 

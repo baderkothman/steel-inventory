@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 import { authApi } from "../../lib/api";
+import { SESSION_EXPIRED_EVENT } from "../../lib/tauri";
 import type { AdminUser } from "../../types/common";
 
 type AuthContextValue = {
@@ -34,6 +35,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (!admin) return;
+    const checkSession = window.setInterval(async () => {
+      try {
+        const current = await authApi.current();
+        setAdmin(current);
+      } catch {
+        setAdmin(null);
+      }
+    }, 60_000);
+    return () => window.clearInterval(checkSession);
+  }, [admin]);
+
+  useEffect(() => {
+    const expire = () => setAdmin(null);
+    window.addEventListener(SESSION_EXPIRED_EVENT, expire);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, expire);
+  }, []);
 
   const setup = useCallback(async (payload: { full_name: string; email: string; password: string }) => {
     const user = await authApi.setup(payload);

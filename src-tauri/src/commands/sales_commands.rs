@@ -1,14 +1,19 @@
 use tauri::State;
 
 use crate::{
-    models::{InvoiceDetail, InvoiceFilters, InvoiceListRow, InvoiceSaveResult, SalesInvoicePayload},
+    models::{
+        InvoiceDetail, InvoiceFilters, InvoiceListRow, InvoiceSaveResult, SalesInvoicePayload,
+    },
     services::sales_service,
     state::AppState,
     utils::errors::AppError,
 };
 
 #[tauri::command]
-pub fn create_sales_invoice(state: State<'_, AppState>, payload: SalesInvoicePayload) -> Result<InvoiceSaveResult, AppError> {
+pub fn create_sales_invoice(
+    state: State<'_, AppState>,
+    payload: SalesInvoicePayload,
+) -> Result<InvoiceSaveResult, AppError> {
     let user_id = state.require_user_id()?;
     let conn = state.open_conn()?;
     sales_service::create_sales_invoice(&conn, user_id, payload)
@@ -22,6 +27,23 @@ pub fn cancel_sales_invoice(state: State<'_, AppState>, id: i64) -> Result<(), A
 }
 
 #[tauri::command]
+pub fn restore_sales_invoice(state: State<'_, AppState>, id: i64) -> Result<(), AppError> {
+    let user_id = state.require_user_id()?;
+    let conn = state.open_conn()?;
+    sales_service::restore_sales_invoice(&conn, user_id, id)
+}
+
+#[tauri::command]
+pub fn permanently_delete_sales_invoice(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<(), AppError> {
+    let user_id = state.require_user_id()?;
+    let conn = state.open_conn()?;
+    sales_service::permanently_delete_sales_invoice(&conn, user_id, id)
+}
+
+#[tauri::command]
 pub fn get_sales_invoice(state: State<'_, AppState>, id: i64) -> Result<InvoiceDetail, AppError> {
     state.require_user_id()?;
     let conn = state.open_conn()?;
@@ -29,7 +51,10 @@ pub fn get_sales_invoice(state: State<'_, AppState>, id: i64) -> Result<InvoiceD
 }
 
 #[tauri::command]
-pub fn list_sales_invoices(state: State<'_, AppState>, filters: InvoiceFilters) -> Result<Vec<InvoiceListRow>, AppError> {
+pub fn list_sales_invoices(
+    state: State<'_, AppState>,
+    filters: InvoiceFilters,
+) -> Result<Vec<InvoiceListRow>, AppError> {
     state.require_user_id()?;
     let conn = state.open_conn()?;
     sales_service::list_sales_invoices(&conn, filters)

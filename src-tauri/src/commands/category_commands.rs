@@ -36,6 +36,13 @@ pub fn archive_category(state: State<'_, AppState>, id: i64) -> Result<(), AppEr
 }
 
 #[tauri::command]
+pub fn restore_category(state: State<'_, AppState>, id: i64) -> Result<(), AppError> {
+    let user_id = state.require_user_id()?;
+    let conn = state.open_conn()?;
+    category_service::restore_category(&conn, user_id, id)
+}
+
+#[tauri::command]
 pub fn delete_category(state: State<'_, AppState>, id: i64) -> Result<(), AppError> {
     let user_id = state.require_user_id()?;
     let conn = state.open_conn()?;

@@ -1,11 +1,14 @@
+import { useState } from "react";
 import { NavLink } from "react-router-dom";
 import {
   Box,
   Divider,
+  IconButton,
   List,
   ListItemButton,
   ListItemIcon,
   ListItemText,
+  Tooltip,
   Typography
 } from "@mui/material";
 import DashboardIcon from "@mui/icons-material/Dashboard";
@@ -20,6 +23,8 @@ import PaymentsIcon from "@mui/icons-material/Payments";
 import AssessmentIcon from "@mui/icons-material/Assessment";
 import SettingsIcon from "@mui/icons-material/Settings";
 import BackupIcon from "@mui/icons-material/Backup";
+import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
+import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 
 const items = [
   { to: "/", label: "Dashboard", icon: <DashboardIcon /> },
@@ -37,52 +42,111 @@ const items = [
 ];
 
 export function Sidebar() {
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return window.localStorage.getItem("steel-inventory.sidebar-collapsed") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  function toggleSidebar() {
+    setCollapsed((current) => {
+      const next = !current;
+      try {
+        window.localStorage.setItem("steel-inventory.sidebar-collapsed", String(next));
+      } catch {
+        // The preference is optional when storage is unavailable.
+      }
+      return next;
+    });
+  }
+
   return (
     <Box
+      component="aside"
+      aria-label="Primary navigation"
       sx={{
-        width: 264,
+        width: collapsed ? 76 : 264,
+        flex: `0 0 ${collapsed ? 76 : 264}px`,
         height: "100vh",
         bgcolor: "background.paper",
         borderRight: "1px solid",
         borderColor: "divider",
         display: "flex",
-        flexDirection: "column"
+        flexDirection: "column",
+        overflow: "hidden",
+        transition: "width 200ms cubic-bezier(0.22, 1, 0.36, 1), flex-basis 200ms cubic-bezier(0.22, 1, 0.36, 1)"
       }}
     >
-      <Box sx={{ px: 2.5, py: 2.5 }}>
-        <Typography variant="h6">Steel Inventory</Typography>
-        <Typography variant="caption" color="text.secondary">
-          Offline desktop system
-        </Typography>
+      <Box sx={{ height: 76, px: collapsed ? 1.25 : 2.5, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
+        {collapsed ? (
+          <Typography aria-label="Steel Inventory" variant="h6" color="primary.main" sx={{ width: 40, textAlign: "center" }}>
+            SI
+          </Typography>
+        ) : (
+          <Box sx={{ minWidth: 0 }}>
+            <Typography variant="h6" noWrap>Steel Inventory</Typography>
+            <Typography variant="caption" color="text.secondary" noWrap>
+              Offline desktop system
+            </Typography>
+          </Box>
+        )}
+        {!collapsed ? (
+          <Tooltip title="Collapse sidebar">
+            <IconButton size="small" aria-label="Collapse sidebar" onClick={toggleSidebar}>
+              <ChevronLeftIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        ) : null}
       </Box>
       <Divider />
-      <List sx={{ px: 1.25, py: 1.5 }}>
+      <List sx={{ px: collapsed ? 1 : 1.25, py: 1.5, flex: 1, overflowY: "auto", overflowX: "hidden" }}>
         {items.map((item) => (
-          <ListItemButton
-            key={item.to}
-            component={NavLink}
-            to={item.to}
-            end={item.to === "/"}
-            sx={{
-              minHeight: 42,
-              borderRadius: 1,
-              mb: 0.25,
-              color: "text.secondary",
-              "&.active": {
-                bgcolor: "rgba(31,111,120,0.11)",
-                color: "primary.main",
-                fontWeight: 700
-              }
-            }}
-          >
-            <ListItemIcon sx={{ minWidth: 36, color: "inherit" }}>{item.icon}</ListItemIcon>
-            <ListItemText
-              primary={item.label}
-              primaryTypographyProps={{ fontSize: 14, fontWeight: "inherit" }}
-            />
-          </ListItemButton>
+          <Tooltip key={item.to} title={collapsed ? item.label : ""} placement="right" arrow>
+            <ListItemButton
+              component={NavLink}
+              to={item.to}
+              end={item.to === "/"}
+              aria-label={item.label}
+              sx={{
+                minHeight: 44,
+                justifyContent: collapsed ? "center" : "flex-start",
+                px: collapsed ? 1 : 1.25,
+                borderRadius: 1,
+                mb: 0.25,
+                color: "text.secondary",
+                "&.active": {
+                  bgcolor: "rgba(31,111,120,0.11)",
+                  color: "primary.main",
+                  fontWeight: 700
+                }
+              }}
+            >
+              <ListItemIcon sx={{ minWidth: collapsed ? 0 : 36, justifyContent: "center", color: "inherit" }}>{item.icon}</ListItemIcon>
+              {!collapsed ? (
+                <ListItemText
+                  primary={item.label}
+                  primaryTypographyProps={{ fontSize: 14, fontWeight: "inherit", noWrap: true }}
+                />
+              ) : null}
+            </ListItemButton>
+          </Tooltip>
         ))}
       </List>
+      {collapsed ? (
+        <Box sx={{ p: 1, borderTop: "1px solid", borderColor: "divider" }}>
+          <Tooltip title="Expand sidebar" placement="right" arrow>
+            <IconButton
+              aria-label="Expand sidebar"
+              onClick={toggleSidebar}
+              sx={{ width: "100%", borderRadius: 1 }}
+            >
+              <ChevronRightIcon />
+            </IconButton>
+          </Tooltip>
+        </Box>
+      ) : null}
     </Box>
   );
 }

@@ -1,14 +1,18 @@
 import { useState } from "react";
-import { Alert, Button, Card, CardContent, Grid, Snackbar, Stack, Table, TableBody, TableCell, TableHead, TableRow, Typography } from "@mui/material";
+import { Alert, Box, Button, Card, CardContent, Grid, Snackbar, Stack, Typography } from "@mui/material";
 import DataObjectIcon from "@mui/icons-material/DataObject";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { MoneyText } from "../../components/MoneyText";
 import { PageHeader } from "../../components/PageHeader";
-import { EmptyState, LoadingState } from "../../components/feedback/PageState";
+import { LoadingState } from "../../components/feedback/PageState";
 import { PrintButton } from "../../components/print/PrintButton";
+import { EnterpriseTable, type TableColumn } from "../../components/table/EnterpriseTable";
+import { StatusBadge } from "../../components/table/StatusBadge";
 import { reportApi, seedApi } from "../../lib/api";
-import { quantity } from "../../lib/formatters";
+import { money, quantity } from "../../lib/formatters";
+import type { InvoiceListRow } from "../../types/invoice";
+import type { Product } from "../../types/product";
 
 const cards = [
   ["today_sales_count", "Today's sales count"],
@@ -24,6 +28,19 @@ const cards = [
 ] as const;
 
 const countCards = new Set(["today_sales_count", "today_purchase_count", "low_stock_count"]);
+const invoiceColumns: TableColumn<InvoiceListRow>[] = [
+  { id: "invoice", label: "Invoice", value: (row) => row.invoice_number, minWidth: 120 },
+  { id: "date", label: "Date", value: (row) => row.invoice_date, width: 110 },
+  { id: "party", label: "Party", value: (row) => row.party_name, minWidth: 150 },
+  { id: "total", label: "Total", value: (row) => money(row.total_cents), render: (row) => <MoneyText value={row.total_cents} />, align: "right", minWidth: 110 },
+  { id: "status", label: "Status", value: (row) => row.payment_status, render: (row) => <StatusBadge value={row.payment_status} />, width: 110 }
+];
+const lowStockColumns: TableColumn<Product>[] = [
+  { id: "sku", label: "SKU", value: (row) => row.sku, minWidth: 130 },
+  { id: "product", label: "Product", value: (row) => row.name, minWidth: 180 },
+  { id: "current", label: "Current", value: (row) => quantity(row.current_quantity), align: "right", width: 100 },
+  { id: "minimum", label: "Minimum", value: (row) => quantity(row.minimum_quantity), align: "right", width: 100 }
+];
 
 export function DashboardPage() {
   const queryClient = useQueryClient();
@@ -88,94 +105,57 @@ export function DashboardPage() {
         </Grid>
 
       <Grid container spacing={2}>
-        <Grid size={{ xs: 12, md: 6 }}>
-          <Card variant="outlined">
-            <CardContent>
-              <Typography variant="h6" sx={{ mb: 1.5 }}>
-                Recent sales invoices
-              </Typography>
-              <InvoiceTable rows={data.recent_sales_invoices} />
-            </CardContent>
-          </Card>
+        <Grid size={{ xs: 12, md: 6 }} sx={{ display: "flex" }}>
+          <Stack spacing={1} sx={{ width: "100%", minWidth: 0 }}>
+            <Typography variant="h6">Recent Sales Invoices</Typography>
+            <Box sx={{ flex: 1, minHeight: 0 }}>
+              <EnterpriseTable
+                title="Recent Sales Invoices"
+                rows={data.recent_sales_invoices}
+                columns={invoiceColumns}
+                rowId={(row) => row.id}
+                compact
+                pageSize={10}
+                fillHeight
+                emptyTitle="No recent sales invoices"
+                emptyDescription="Active sales invoices will appear here."
+              />
+            </Box>
+          </Stack>
         </Grid>
-        <Grid size={{ xs: 12, md: 6 }}>
-          <Card variant="outlined">
-            <CardContent>
-              <Typography variant="h6" sx={{ mb: 1.5 }}>
-                Recent purchase invoices
-              </Typography>
-              <InvoiceTable rows={data.recent_purchase_invoices} />
-            </CardContent>
-          </Card>
+        <Grid size={{ xs: 12, md: 6 }} sx={{ display: "flex" }}>
+          <Stack spacing={1} sx={{ width: "100%", minWidth: 0 }}>
+            <Typography variant="h6">Recent Purchase Invoices</Typography>
+            <Box sx={{ flex: 1, minHeight: 0 }}>
+              <EnterpriseTable
+                title="Recent Purchase Invoices"
+                rows={data.recent_purchase_invoices}
+                columns={invoiceColumns}
+                rowId={(row) => row.id}
+                compact
+                pageSize={10}
+                fillHeight
+                emptyTitle="No recent purchase invoices"
+                emptyDescription="Active purchase invoices will appear here."
+              />
+            </Box>
+          </Stack>
         </Grid>
       </Grid>
 
-        <Card variant="outlined">
-          <CardContent>
-            <Typography variant="h6" sx={{ mb: 1.5 }}>
-              Low-stock products
-            </Typography>
-            {data.low_stock_products.length === 0 ? (
-              <EmptyState label="No products are currently at or below minimum stock." />
-            ) : (
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>SKU</TableCell>
-                    <TableCell>Product</TableCell>
-                    <TableCell align="right">Current</TableCell>
-                    <TableCell align="right">Minimum</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {data.low_stock_products.map((product) => (
-                    <TableRow key={product.id}>
-                      <TableCell>{product.sku}</TableCell>
-                      <TableCell>{product.name}</TableCell>
-                      <TableCell align="right">{quantity(product.current_quantity)}</TableCell>
-                      <TableCell align="right">{quantity(product.minimum_quantity)}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
+        <Box>
+          <EnterpriseTable
+            title="Low-stock Products"
+            rows={data.low_stock_products}
+            columns={lowStockColumns}
+            rowId={(row) => row.id}
+            compact
+            emptyTitle="Stock levels are healthy"
+            emptyDescription="No products are currently at or below minimum stock."
+          />
+        </Box>
       </Stack>
       <Snackbar open={Boolean(toast)} autoHideDuration={5000} onClose={() => setToast(null)} message={toast} />
     </Stack>
-  );
-}
-
-function InvoiceTable({ rows }: { rows: Array<{ id: number; invoice_number: string; invoice_date: string; party_name: string; total_cents: number; payment_status: string }> }) {
-  if (rows.length === 0) {
-    return <EmptyState label="No invoices recorded yet." />;
-  }
-
-  return (
-    <Table size="small">
-      <TableHead>
-        <TableRow>
-          <TableCell>Invoice</TableCell>
-          <TableCell>Date</TableCell>
-          <TableCell>Party</TableCell>
-          <TableCell align="right">Total</TableCell>
-          <TableCell>Status</TableCell>
-        </TableRow>
-      </TableHead>
-      <TableBody>
-        {rows.map((row) => (
-          <TableRow key={row.id}>
-            <TableCell>{row.invoice_number}</TableCell>
-            <TableCell>{row.invoice_date}</TableCell>
-            <TableCell>{row.party_name}</TableCell>
-            <TableCell align="right">
-              <MoneyText value={row.total_cents} />
-            </TableCell>
-            <TableCell>{row.payment_status}</TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
   );
 }

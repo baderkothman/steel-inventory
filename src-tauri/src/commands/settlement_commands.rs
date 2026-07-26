@@ -25,6 +25,23 @@ pub fn delete_settlement_payment(state: State<'_, AppState>, id: i64) -> Result<
 }
 
 #[tauri::command]
+pub fn restore_settlement_payment(state: State<'_, AppState>, id: i64) -> Result<(), AppError> {
+    let user_id = state.require_user_id()?;
+    let conn = state.open_conn()?;
+    settlement_service::restore_settlement_payment(&conn, user_id, id)
+}
+
+#[tauri::command]
+pub fn permanently_delete_settlement_payment(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<(), AppError> {
+    let user_id = state.require_user_id()?;
+    let conn = state.open_conn()?;
+    settlement_service::permanently_delete_settlement_payment(&conn, user_id, id)
+}
+
+#[tauri::command]
 pub fn list_settlement_payments(
     state: State<'_, AppState>,
     filters: SettlementFilters,

@@ -1,19 +1,27 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Button, Paper, Stack, Table, TableBody, TableCell, TableHead, TableRow, TextField } from "@mui/material";
+import { Button, Paper, Stack, TextField } from "@mui/material";
 import BackupIcon from "@mui/icons-material/Backup";
 import RestoreIcon from "@mui/icons-material/Restore";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { PageHeader } from "../../components/PageHeader";
-import { EmptyState, LoadingState } from "../../components/feedback/PageState";
-import { PrintButton } from "../../components/print/PrintButton";
+import { EnterpriseTable, type TableColumn } from "../../components/table/EnterpriseTable";
+import { StatusBadge } from "../../components/table/StatusBadge";
 import { backupApi } from "../../lib/api";
+import type { BackupRow } from "../../types/common";
 
 export function BackupPage() {
   const queryClient = useQueryClient();
   const [restorePath, setRestorePath] = useState("");
   const { data = [], isLoading } = useQuery({ queryKey: ["backups"], queryFn: backupApi.list });
+  const columns = useMemo<TableColumn<BackupRow>[]>(() => [
+    { id: "date", label: "Date", value: (row) => row.created_at, minWidth: 170 },
+    { id: "type", label: "Type", value: (row) => row.backup_type, width: 120 },
+    { id: "status", label: "Status", value: (row) => row.status, render: (row) => <StatusBadge value={row.status} />, width: 110 },
+    { id: "path", label: "Path", value: (row) => row.backup_path, minWidth: 280 },
+    { id: "notes", label: "Notes", value: (row) => row.notes ?? "", minWidth: 180 }
+  ], []);
 
   const backupMutation = useMutation({
     mutationFn: backupApi.create,
@@ -40,7 +48,6 @@ export function BackupPage() {
       <PageHeader
         title="Backup"
         description="Create manual backups and restore local SQLite database files."
-        actions={<PrintButton targetId="backup-log-print" title="Backup History" disabled={!data.length} />}
       />
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
@@ -50,14 +57,16 @@ export function BackupPage() {
           <Button color="warning" startIcon={<RestoreIcon />} variant="contained" disabled={!restorePath || restoreMutation.isPending} onClick={restore}>Restore</Button>
         </Stack>
       </Paper>
-      <Paper id="backup-log-print" variant="outlined">
-        {isLoading ? <LoadingState label="Loading backups" /> : data.length === 0 ? <EmptyState label="No backups recorded." /> : (
-          <Table size="small">
-            <TableHead><TableRow><TableCell>Date</TableCell><TableCell>Type</TableCell><TableCell>Status</TableCell><TableCell>Path</TableCell><TableCell>Notes</TableCell></TableRow></TableHead>
-            <TableBody>{data.map((row) => <TableRow key={row.id}><TableCell>{row.created_at}</TableCell><TableCell>{row.backup_type}</TableCell><TableCell>{row.status}</TableCell><TableCell>{row.backup_path}</TableCell><TableCell>{row.notes}</TableCell></TableRow>)}</TableBody>
-          </Table>
-        )}
-      </Paper>
+      <EnterpriseTable
+        title="Backup History"
+        rows={data}
+        columns={columns}
+        rowId={(row) => row.id}
+        loading={isLoading}
+        initialSort={{ column: "date", direction: "desc" }}
+        emptyTitle="No backups recorded"
+        emptyDescription="Create a manual backup to establish a recovery point."
+      />
     </Stack>
   );
 }
