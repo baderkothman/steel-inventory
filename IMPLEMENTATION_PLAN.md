@@ -54,7 +54,6 @@ Build artifacts produced:
 | Settings             |   Done | Company data, currency, invoice prefixes, negative-stock toggle, backup path, default tax value, profit method                    |
 | Backup / Restore     |   Done | Manual backup, automatic daily backup, restore with emergency backup, backup log                                                  |
 | Audit Log            |   Done | Audit records for major create/update/archive/delete/cancel/login/backup actions                                                  |
-| Demo Data Seed       |   Done | Dashboard action inserts realistic sample rows across all main pages without duplicate inserts                                    |
 
 ---
 

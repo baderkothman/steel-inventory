@@ -534,12 +534,6 @@ pub struct BackupRow {
     pub created_at: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct DemoSeedResult {
-    pub inserted: bool,
-    pub message: String,
-}
-
 #[derive(Debug, Deserialize)]
 pub struct ClearAllDataPayload {
     pub admin_email: String,

@@ -1,7 +1,5 @@
-import { useState } from "react";
-import { Alert, Box, Button, Card, CardContent, Grid, Snackbar, Stack, Typography } from "@mui/material";
-import DataObjectIcon from "@mui/icons-material/DataObject";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Box, Card, CardContent, Grid, Stack, Typography } from "@mui/material";
+import { useQuery } from "@tanstack/react-query";
 
 import { MoneyText } from "../../components/MoneyText";
 import { PageHeader } from "../../components/PageHeader";
@@ -9,7 +7,7 @@ import { LoadingState } from "../../components/feedback/PageState";
 import { PrintButton } from "../../components/print/PrintButton";
 import { EnterpriseTable, type TableColumn } from "../../components/table/EnterpriseTable";
 import { StatusBadge } from "../../components/table/StatusBadge";
-import { reportApi, seedApi } from "../../lib/api";
+import { reportApi } from "../../lib/api";
 import { money, quantity } from "../../lib/formatters";
 import type { InvoiceListRow } from "../../types/invoice";
 import type { Product } from "../../types/product";
@@ -43,19 +41,9 @@ const lowStockColumns: TableColumn<Product>[] = [
 ];
 
 export function DashboardPage() {
-  const queryClient = useQueryClient();
-  const [toast, setToast] = useState<string | null>(null);
   const { data, isLoading } = useQuery({
     queryKey: ["dashboard"],
     queryFn: () => reportApi.dashboard()
-  });
-  const seedMutation = useMutation({
-    mutationFn: seedApi.demoData,
-    onSuccess: async (result) => {
-      setToast(result.message);
-      await queryClient.invalidateQueries();
-    },
-    onError: (error) => setToast(error instanceof Error ? error.message : "Could not seed demo data.")
   });
 
   if (isLoading || !data) {
@@ -69,22 +57,6 @@ export function DashboardPage() {
         description="Daily sales, profit, debts, and stock alerts."
         actions={<PrintButton targetId="dashboard-print" title="Inventory Dashboard" />}
       />
-      <Alert
-        severity="info"
-        action={
-          <Button
-            color="inherit"
-            size="small"
-            startIcon={<DataObjectIcon />}
-            disabled={seedMutation.isPending}
-            onClick={() => seedMutation.mutate()}
-          >
-            Seed demo data
-          </Button>
-        }
-      >
-        Populate demo rows across products, parties, purchases, sales, expenses, payments, reports, and backup logs.
-      </Alert>
 
       <Stack id="dashboard-print" spacing={2}>
         <Grid container spacing={2}>
@@ -155,7 +127,6 @@ export function DashboardPage() {
           />
         </Box>
       </Stack>
-      <Snackbar open={Boolean(toast)} autoHideDuration={5000} onClose={() => setToast(null)} message={toast} />
     </Stack>
   );
 }

@@ -11,6 +11,5 @@ pub mod product_service;
 pub mod purchase_service;
 pub mod report_service;
 pub mod sales_service;
-pub mod seed_service;
 pub mod settings_service;
 pub mod settlement_service;

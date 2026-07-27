@@ -17,7 +17,6 @@ Major implemented areas:
 - Invoice HTML print/PDF flow through the print dialog
 - Manual backup, automatic daily backup, restore with emergency backup
 - Windows executable, MSI installer, and NSIS installer build
-- Explicit Dashboard action for seeding realistic demo data across all main pages
 
 ## Source-of-Truth Decisions
 

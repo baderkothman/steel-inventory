@@ -31,6 +31,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "007_installment_payments",
         include_str!("migrations/007_installment_payments.sql"),
     ),
+    (
+        "008_remove_demo_data",
+        include_str!("migrations/008_remove_demo_data.sql"),
+    ),
 ];
 
 pub fn run_migrations(conn: &mut Connection) -> Result<(), AppError> {

@@ -1,6 +1,6 @@
 [package]
 name = "steel_inventory"
-version = "1.0.9"
+version = "1.0.10"
 description = "Offline-first steel inventory, invoices, expenses, and reporting desktop system"
 authors = ["Steel Inventory"]
 edition = "2021"

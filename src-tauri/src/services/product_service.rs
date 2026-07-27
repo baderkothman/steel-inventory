@@ -22,7 +22,7 @@ use crate::{
 pub fn generate_sku(payload: ProductPayload) -> Result<String, AppError> {
     validate_product_payload(&payload)?;
     // Preview only (no DB): use the supplied supplier id if any, else 0 as a placeholder.
-    Ok(resolve_sku(&payload, payload.supplier_id.unwrap_or(0)))
+    Ok(base_sku(&payload, payload.supplier_id.unwrap_or(0)))
 }
 
 pub fn list_products(
@@ -110,8 +110,7 @@ pub fn create_product(
 ) -> Result<ProductRow, AppError> {
     validate_product_payload(&payload)?;
     let supplier_id = resolve_supplier_id(conn, payload.supplier_id)?;
-    let sku = resolve_sku(&payload, supplier_id);
-    ensure_unique_sku(conn, &sku, None)?;
+    let sku = resolve_unique_sku(conn, &payload, supplier_id, None)?;
     let settings = get_company_settings(conn)?;
     let now = now_iso();
     let wholesale = payload.wholesale_price_cents.unwrap_or(0);
@@ -205,8 +204,7 @@ pub fn update_product(
     validate_product_payload(&payload)?;
     ensure_product_exists(conn, id)?;
     let supplier_id = resolve_supplier_id(conn, payload.supplier_id)?;
-    let sku = resolve_sku(&payload, supplier_id);
-    ensure_unique_sku(conn, &sku, Some(id))?;
+    let sku = resolve_unique_sku(conn, &payload, supplier_id, Some(id))?;
     let settings = get_company_settings(conn)?;
     let wholesale = payload.wholesale_price_cents.unwrap_or(0);
     let now = now_iso();
@@ -398,10 +396,10 @@ fn validate_product_payload(payload: &ProductPayload) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Resolves the product SKU. An explicit SKU is respected as-is. When auto-generating,
-/// the resolved supplier id is appended so the same specification bought from different
-/// suppliers produces distinct, unique SKUs (e.g. BSP-RD-2INCH-2-S3 vs -S4).
-fn resolve_sku(payload: &ProductPayload, supplier_id: i64) -> String {
+/// Builds the preferred product SKU. An explicit SKU is respected as-is. When
+/// auto-generating, the resolved supplier id distinguishes the same specification
+/// bought from different suppliers (e.g. BSP-RD-2INCH-2-S3 vs -S4).
+fn base_sku(payload: &ProductPayload, supplier_id: i64) -> String {
     payload
         .sku
         .as_ref()
@@ -410,21 +408,60 @@ fn resolve_sku(payload: &ProductPayload, supplier_id: i64) -> String {
         .unwrap_or_else(|| format!("{}-S{supplier_id}", generate_sku_from_product(payload)))
 }
 
+/// Explicit SKUs must be unique. Blank SKUs are genuinely auto-generated: when
+/// the preferred code is already retained by an active or archived product, use
+/// the next available numeric suffix instead of returning a misleading duplicate
+/// error for a value the user never entered.
+fn resolve_unique_sku(
+    conn: &Connection,
+    payload: &ProductPayload,
+    supplier_id: i64,
+    excluded_id: Option<i64>,
+) -> Result<String, AppError> {
+    let preferred = base_sku(payload, supplier_id);
+    let has_explicit_sku = payload
+        .sku
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty());
+
+    if has_explicit_sku {
+        ensure_unique_sku(conn, &preferred, excluded_id)?;
+        return Ok(preferred);
+    }
+
+    if !sku_exists(conn, &preferred, excluded_id)? {
+        return Ok(preferred);
+    }
+
+    let mut suffix = 2_u64;
+    loop {
+        let candidate = format!("{preferred}-{suffix}");
+        if !sku_exists(conn, &candidate, excluded_id)? {
+            return Ok(candidate);
+        }
+        suffix += 1;
+    }
+}
+
 fn ensure_unique_sku(
     conn: &Connection,
     sku: &str,
     excluded_id: Option<i64>,
 ) -> Result<(), AppError> {
+    if sku_exists(conn, sku, excluded_id)? {
+        Err(AppError::duplicate_sku())
+    } else {
+        Ok(())
+    }
+}
+
+fn sku_exists(conn: &Connection, sku: &str, excluded_id: Option<i64>) -> Result<bool, AppError> {
     let count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM products WHERE sku = ?1 AND (?2 IS NULL OR id <> ?2)",
         params![sku, excluded_id],
         |row| row.get(0),
     )?;
-    if count > 0 {
-        Err(AppError::duplicate_sku())
-    } else {
-        Ok(())
-    }
+    Ok(count > 0)
 }
 
 fn ensure_product_exists(conn: &Connection, id: i64) -> Result<(), AppError> {

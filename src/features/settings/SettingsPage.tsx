@@ -127,7 +127,7 @@ export function SettingsPage() {
             {clearMessage ? <Alert severity="success">{clearMessage}</Alert> : null}
             <Typography variant="body2" color="text.secondary">
               Clear All Data permanently removes products, parties, invoices, payments, inventory,
-              expenses, backup history, demo data, and business logs. Your administrator account and
+              expenses, backup history, and business logs. Your administrator account and
               company settings remain.
             </Typography>
             <Divider />

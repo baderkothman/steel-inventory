@@ -180,10 +180,6 @@ export const reportApi = {
     call<ReportRow[]>("get_supplier_settlement_summary", { filters })
 };
 
-export const seedApi = {
-  demoData: () => call<{ inserted: boolean; message: string }>("seed_demo_data")
-};
-
 export const settingsApi = {
   get: () => call<CompanySettings>("get_company_settings"),
   update: (payload: Omit<CompanySettings, "id" | "created_at" | "updated_at">) =>

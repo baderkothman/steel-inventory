@@ -11,8 +11,8 @@ mod tests;
 use commands::{
     auth_commands::*, backup_commands::*, category_commands::*, customer_commands::*,
     expense_commands::*, invoice_payment_commands::*, payment_commands::*, product_commands::*,
-    purchase_commands::*, report_commands::*, sales_commands::*, seed_commands::*,
-    settings_commands::*, settlement_commands::*, supplier_commands::*,
+    purchase_commands::*, report_commands::*, sales_commands::*, settings_commands::*,
+    settlement_commands::*, supplier_commands::*,
 };
 use state::AppState;
 
@@ -83,7 +83,6 @@ pub fn run() {
             get_sales_invoice,
             list_sales_invoices,
             print_sales_invoice,
-            seed_demo_data,
             list_expense_categories,
             create_expense,
             update_expense,

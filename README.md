@@ -20,8 +20,6 @@ npm run tauri:dev
 
 On first launch, create the single local admin account. Later launches require that admin login before business data is accessible.
 
-After login, open the Dashboard and click `Seed demo data` to populate realistic sample rows across products, suppliers, customers, purchases, sales invoices, expenses, payments, reports, stock movement, and backup logs. The seed is idempotent and will not insert duplicates if demo products already exist.
-
 ## Build
 
 ```bash

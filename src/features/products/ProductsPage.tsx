@@ -16,6 +16,7 @@ import {
   Typography
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
+import ArchiveIcon from "@mui/icons-material/Archive";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
 import HistoryIcon from "@mui/icons-material/History";
@@ -210,7 +211,7 @@ export function ProductsPage() {
           { label: "Edit", icon: <EditIcon fontSize="small" />, onClick: () => setForm(productToForm(row)) },
           { label: "Adjust stock", icon: <TuneIcon fontSize="small" />, onClick: () => setAdjustProduct(row) },
           { label: "View movement", icon: <HistoryIcon fontSize="small" />, onClick: () => setMovementProduct(row) },
-          { label: "Delete", icon: <DeleteIcon fontSize="small" />, destructive: true, onClick: () => setDeleteId(row.id) }
+          { label: "Archive", icon: <ArchiveIcon fontSize="small" />, destructive: true, onClick: () => setDeleteId(row.id) }
         ]}
       />
 
@@ -228,9 +229,9 @@ export function ProductsPage() {
       <StockAdjustDialog product={adjustProduct} onClose={() => setAdjustProduct(null)} />
       <ConfirmDialog
         open={deleteId !== null}
-        title="Delete product"
+        title="Archive product"
         message="This removes the product from active lists while preserving its invoice and stock history."
-        confirmLabel="Delete"
+        confirmLabel="Archive"
         error={deleteError}
         loading={deleteMutation.isPending}
         onClose={() => {
