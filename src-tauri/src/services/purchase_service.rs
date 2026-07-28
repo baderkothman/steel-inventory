@@ -154,12 +154,24 @@ pub fn cancel_purchase_invoice(conn: &Connection, user_id: i64, id: i64) -> Resu
     if invoice.invoice.status == "cancelled" {
         return Ok(());
     }
+    let active_returns: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM purchase_returns
+         WHERE purchase_invoice_id = ?1 AND status = 'active'",
+        [id],
+        |row| row.get(0),
+    )?;
+    if active_returns > 0 {
+        return Err(AppError::validation(
+            "Cancel the active purchase returns before cancelling the original purchase invoice.",
+        ));
+    }
     let now = now_iso();
     let tx = conn.unchecked_transaction()?;
     tx.execute(
         "UPDATE inventory_transactions
          SET status = 'cancelled', deleted_at = ?1
-         WHERE reference_type = 'purchase_invoice' AND reference_id = ?2",
+         WHERE reference_type = 'purchase_invoice' AND reference_id = ?2
+           AND purchase_return_id IS NULL",
         params![now, id],
     )?;
     for item in &invoice.items {
@@ -200,7 +212,8 @@ pub fn restore_purchase_invoice(conn: &Connection, user_id: i64, id: i64) -> Res
     tx.execute(
         "UPDATE inventory_transactions
          SET status = 'active', deleted_at = NULL
-         WHERE reference_type = 'purchase_invoice' AND reference_id = ?1",
+         WHERE reference_type = 'purchase_invoice' AND reference_id = ?1
+           AND purchase_return_id IS NULL",
         [id],
     )?;
     for item in &invoice.items {
@@ -230,6 +243,7 @@ pub fn restore_purchase_invoice(conn: &Connection, user_id: i64, id: i64) -> Res
     tx.execute(
         "UPDATE purchase_invoices
          SET status = 'active', paid_cents = ?1,
+             returned_cents = 0,
              remaining_cents = MAX(total_cents - ?1, 0),
              payment_status = CASE
                WHEN ?1 <= 0 THEN 'unpaid'
@@ -254,6 +268,16 @@ pub fn permanently_delete_purchase_invoice(
     if invoice.invoice.status != "cancelled" {
         return Err(AppError::validation(
             "Only a cancelled purchase can be permanently deleted.",
+        ));
+    }
+    let return_history: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM purchase_returns WHERE purchase_invoice_id = ?1",
+        [id],
+        |row| row.get(0),
+    )?;
+    if return_history > 0 {
+        return Err(AppError::validation(
+            "A purchase with return history cannot be permanently deleted.",
         ));
     }
     let tx = conn.unchecked_transaction()?;
@@ -289,7 +313,8 @@ pub fn list_purchase_invoices(
     let mut stmt = conn.prepare(
         "SELECT pi.id, pi.supplier_id, pi.invoice_number, pi.invoice_date, s.name,
                 pi.subtotal_cents, pi.discount_cents, pi.tax_cents, pi.shipping_cents,
-                pi.total_cents, pi.paid_cents, pi.remaining_cents, pi.payment_status,
+                pi.total_cents, pi.returned_cents, MAX(pi.total_cents - pi.returned_cents, 0),
+                pi.paid_cents, pi.remaining_cents, pi.payment_status,
                 pi.status, pi.notes, pi.created_at, pi.deleted_at
          FROM purchase_invoices pi
          JOIN suppliers s ON s.id = pi.supplier_id
@@ -324,7 +349,8 @@ pub fn get_purchase_invoice(conn: &Connection, id: i64) -> Result<InvoiceDetail,
         .query_row(
             "SELECT pi.id, pi.supplier_id, pi.invoice_number, pi.invoice_date, s.name,
                     pi.subtotal_cents, pi.discount_cents, pi.tax_cents, pi.shipping_cents,
-                    pi.total_cents, pi.paid_cents, pi.remaining_cents, pi.payment_status,
+                    pi.total_cents, pi.returned_cents, MAX(pi.total_cents - pi.returned_cents, 0),
+                    pi.paid_cents, pi.remaining_cents, pi.payment_status,
                     pi.status, pi.notes, pi.created_at, pi.deleted_at
              FROM purchase_invoices pi
              JOIN suppliers s ON s.id = pi.supplier_id
@@ -486,13 +512,15 @@ fn map_invoice_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<InvoiceListRow> 
         tax_cents: row.get(7)?,
         extra_cents: row.get(8)?,
         total_cents: row.get(9)?,
-        paid_cents: row.get(10)?,
-        remaining_cents: row.get(11)?,
-        payment_status: row.get(12)?,
-        status: row.get(13)?,
-        notes: row.get(14)?,
-        created_at: row.get(15)?,
-        deleted_at: row.get(16)?,
+        returned_cents: row.get(10)?,
+        net_total_cents: row.get(11)?,
+        paid_cents: row.get(12)?,
+        remaining_cents: row.get(13)?,
+        payment_status: row.get(14)?,
+        status: row.get(15)?,
+        notes: row.get(16)?,
+        created_at: row.get(17)?,
+        deleted_at: row.get(18)?,
     })
 }
 

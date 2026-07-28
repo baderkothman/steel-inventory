@@ -8,6 +8,7 @@ pub mod invoice_payment_service;
 pub mod party_service;
 pub mod payment_service;
 pub mod product_service;
+pub mod purchase_return_service;
 pub mod purchase_service;
 pub mod report_service;
 pub mod sales_service;

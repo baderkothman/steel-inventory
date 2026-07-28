@@ -263,14 +263,14 @@ pub struct StatementRow {
     pub balance_cents: i64,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PurchaseItemPayload {
     pub product_id: i64,
     pub quantity: f64,
     pub unit_cost_cents: i64,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PurchaseInvoicePayload {
     pub supplier_id: i64,
     pub invoice_number: Option<String>,
@@ -330,6 +330,8 @@ pub struct InvoiceListRow {
     pub tax_cents: i64,
     pub extra_cents: i64,
     pub total_cents: i64,
+    pub returned_cents: i64,
+    pub net_total_cents: i64,
     pub paid_cents: i64,
     pub remaining_cents: i64,
     pub payment_status: String,
@@ -356,6 +358,88 @@ pub struct InvoiceItemRow {
 pub struct InvoiceDetail {
     pub invoice: InvoiceListRow,
     pub items: Vec<InvoiceItemRow>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PurchaseReturnItemPayload {
+    pub purchase_invoice_item_id: i64,
+    pub quantity: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PurchaseReturnPayload {
+    pub purchase_invoice_id: i64,
+    pub return_date: String,
+    pub reason: Option<String>,
+    pub notes: Option<String>,
+    pub idempotency_key: String,
+    pub items: Vec<PurchaseReturnItemPayload>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PurchaseReturnUpdatePayload {
+    pub return_date: String,
+    pub reason: Option<String>,
+    pub notes: Option<String>,
+    pub items: Vec<PurchaseReturnItemPayload>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PurchaseReturnRow {
+    pub id: i64,
+    pub purchase_invoice_id: i64,
+    pub supplier_id: i64,
+    pub return_number: String,
+    pub return_date: String,
+    pub reason: Option<String>,
+    pub notes: Option<String>,
+    pub subtotal_cents: i64,
+    pub discount_cents: i64,
+    pub tax_cents: i64,
+    pub shipping_cents: i64,
+    pub total_cents: i64,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub cancelled_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PurchaseReturnItemRow {
+    pub id: i64,
+    pub purchase_return_id: i64,
+    pub purchase_invoice_item_id: i64,
+    pub product_id: i64,
+    pub sku: String,
+    pub product_name: String,
+    pub quantity: f64,
+    pub unit_cost_cents: i64,
+    pub total_cost_cents: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PurchaseReturnDetail {
+    pub return_record: PurchaseReturnRow,
+    pub items: Vec<PurchaseReturnItemRow>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PurchaseReturnableItemRow {
+    pub purchase_invoice_item_id: i64,
+    pub product_id: i64,
+    pub sku: String,
+    pub product_name: String,
+    pub purchased_quantity: f64,
+    pub returned_quantity: f64,
+    pub returnable_quantity: f64,
+    pub unit_cost_cents: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PurchaseReturnContext {
+    pub invoice: InvoiceListRow,
+    pub items: Vec<PurchaseReturnableItemRow>,
+    pub returns: Vec<PurchaseReturnDetail>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

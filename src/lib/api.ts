@@ -7,7 +7,16 @@ import type {
   CompanySettings,
   DateRangeFilters
 } from "../types/common";
-import type { InvoiceListRow, InvoiceSaveResult, PurchaseInvoicePayload, SalesInvoicePayload } from "../types/invoice";
+import type {
+  InvoiceListRow,
+  InvoiceSaveResult,
+  PurchaseInvoicePayload,
+  PurchaseReturnContext,
+  PurchaseReturnDetail,
+  PurchaseReturnPayload,
+  PurchaseReturnUpdatePayload,
+  SalesInvoicePayload
+} from "../types/invoice";
 import type {
   ExpenseCategory,
   ExpensePayload,
@@ -113,7 +122,17 @@ export const purchaseApi = {
   restore: (id: number) => call<void>("restore_purchase_invoice", { id }),
   permanentlyDelete: (id: number) =>
     call<void>("permanently_delete_purchase_invoice", { id }),
-  print: (id: number) => call<string>("print_purchase_invoice", { id })
+  print: (id: number) => call<string>("print_purchase_invoice", { id }),
+  returnContext: (purchase_invoice_id: number) =>
+    call<PurchaseReturnContext>("get_purchase_return_context", { purchase_invoice_id }),
+  getReturn: (id: number) => call<PurchaseReturnDetail>("get_purchase_return", { id }),
+  createReturn: (payload: PurchaseReturnPayload) =>
+    call<PurchaseReturnDetail>("create_purchase_return", { payload }),
+  updateReturn: (id: number, payload: PurchaseReturnUpdatePayload) =>
+    call<PurchaseReturnDetail>("update_purchase_return", { id, payload }),
+  cancelReturn: (id: number) => call<void>("cancel_purchase_return", { id }),
+  restoreReturn: (id: number) => call<void>("restore_purchase_return", { id }),
+  printReturn: (id: number) => call<string>("print_purchase_return", { id })
 };
 
 export const salesApi = {

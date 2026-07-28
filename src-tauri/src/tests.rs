@@ -3,10 +3,11 @@ use rusqlite::Connection;
 use crate::{
     db::migrations::run_migrations,
     models::{
-        ClearAllDataPayload, ExpensePayload, InstallmentPaymentPayload, MovementFilters,
-        PartyPayload, PaymentFilters, PaymentPayload, ProductPayload, PurchaseInvoicePayload,
-        PurchaseItemPayload, ReportFilters, SalesInvoicePayload, SalesItemPayload,
-        SetupAdminPayload,
+        ClearAllDataPayload, DateRangeFilters, ExpensePayload, InstallmentPaymentPayload,
+        MovementFilters, PartyPayload, PaymentFilters, PaymentPayload, ProductPayload,
+        PurchaseInvoicePayload, PurchaseItemPayload, PurchaseReturnItemPayload,
+        PurchaseReturnPayload, PurchaseReturnUpdatePayload, ReportFilters, SalesInvoicePayload,
+        SalesItemPayload, SetupAdminPayload,
     },
     services::{
         auth_service::setup_admin,
@@ -20,19 +21,23 @@ use crate::{
             permanently_delete_stock_adjustment, restore_stock_adjustment,
         },
         invoice_payment_service::{list_invoice_payments, record_invoice_payment},
-        party_service::{archive_party, create_party, party_balance, PartyKind},
+        party_service::{archive_party, create_party, party_balance, statement, PartyKind},
         payment_service::{
             create_payment, delete_payment, list_payments, permanently_delete_payment,
             restore_payment,
         },
         product_service::{archive_product, create_product, delete_product, latest_price},
+        purchase_return_service::{
+            cancel_purchase_return, create_purchase_return, get_purchase_return_context,
+            restore_purchase_return, update_purchase_return,
+        },
         purchase_service::{
             cancel_purchase_invoice, create_purchase_invoice, list_purchase_invoices,
             permanently_delete_purchase_invoice, restore_purchase_invoice,
         },
         report_service::{
             daily_sales_report, dashboard_summary, expense_report, payment_report, profit_report,
-            purchase_report, stock_movement_report, stock_report,
+            purchase_report, stock_count_report, stock_movement_report, stock_report,
         },
         sales_service::{
             cancel_sales_invoice, create_sales_invoice, list_sales_invoices,
@@ -1910,6 +1915,8 @@ fn clear_all_data_is_credential_guarded_transactional_and_preserves_system_state
         "products",
         "customers",
         "purchase_invoices",
+        "purchase_returns",
+        "purchase_return_items",
         "sales_invoices",
         "payments",
         "inventory_transactions",
@@ -1971,4 +1978,593 @@ fn clear_all_data_is_credential_guarded_transactional_and_preserves_system_state
     assert_eq!(dashboard.today_sales_cents, 0);
     assert_eq!(dashboard.today_expenses_cents, 0);
     assert_eq!(dashboard.current_stock_value_cents, 0);
+}
+
+#[test]
+fn partial_and_full_purchase_returns_adjust_stock_tax_and_supplier_balance() {
+    let conn = test_conn();
+    let user = make_admin(&conn);
+    let supplier = make_supplier(&conn, user, "Return Supplier");
+    let product = create_product(
+        &conn,
+        user,
+        round_pipe_payload(Some(supplier), "Damaged Pipe", 1_000, 1_500),
+    )
+    .unwrap();
+    let purchase = create_purchase_invoice(
+        &conn,
+        user,
+        PurchaseInvoicePayload {
+            supplier_id: supplier,
+            invoice_number: Some("PI-RETURN-001".to_string()),
+            invoice_date: today_date(),
+            discount_cents: 1_000,
+            tax_cents: 500,
+            shipping_cents: 500,
+            paid_cents: 2_000,
+            notes: None,
+            items: vec![PurchaseItemPayload {
+                product_id: product.id,
+                quantity: 10.0,
+                unit_cost_cents: 1_000,
+            }],
+        },
+    )
+    .unwrap();
+    let context = get_purchase_return_context(&conn, purchase.id).unwrap();
+    let invoice_item_id = context.items[0].purchase_invoice_item_id;
+
+    let partial = create_purchase_return(
+        &conn,
+        user,
+        PurchaseReturnPayload {
+            purchase_invoice_id: purchase.id,
+            return_date: today_date(),
+            reason: Some("Damaged on arrival".to_string()),
+            notes: None,
+            idempotency_key: "return-partial-001".to_string(),
+            items: vec![PurchaseReturnItemPayload {
+                purchase_invoice_item_id: invoice_item_id,
+                quantity: 4.0,
+            }],
+        },
+    )
+    .unwrap();
+    assert_eq!(partial.return_record.subtotal_cents, 4_000);
+    assert_eq!(partial.return_record.discount_cents, 400);
+    assert_eq!(partial.return_record.tax_cents, 200);
+    assert_eq!(partial.return_record.shipping_cents, 200);
+    assert_eq!(partial.return_record.total_cents, 4_000);
+    assert_eq!(
+        conn.query_row(
+            "SELECT current_quantity FROM stock_levels WHERE product_id = ?1",
+            [product.id],
+            |row| row.get::<_, f64>(0)
+        )
+        .unwrap(),
+        6.0
+    );
+    assert_eq!(
+        party_balance(&conn, PartyKind::Supplier, supplier).unwrap(),
+        4_000
+    );
+    let after_partial = get_purchase_return_context(&conn, purchase.id).unwrap();
+    assert_eq!(after_partial.invoice.returned_cents, 4_000);
+    assert_eq!(after_partial.invoice.net_total_cents, 6_000);
+    assert_eq!(after_partial.invoice.paid_cents, 2_000);
+    assert_eq!(after_partial.invoice.remaining_cents, 4_000);
+    assert_eq!(after_partial.items[0].returnable_quantity, 6.0);
+    let supplier_statement = statement(
+        &conn,
+        PartyKind::Supplier,
+        supplier,
+        DateRangeFilters::default(),
+    )
+    .unwrap();
+    assert!(supplier_statement.iter().any(|row| {
+        row.entry_type == "Purchase Return"
+            && row.reference == partial.return_record.return_number
+            && row.credit_cents == 4_000
+    }));
+
+    let full = create_purchase_return(
+        &conn,
+        user,
+        PurchaseReturnPayload {
+            purchase_invoice_id: purchase.id,
+            return_date: today_date(),
+            reason: Some("Remaining batch rejected".to_string()),
+            notes: None,
+            idempotency_key: "return-full-remaining-001".to_string(),
+            items: vec![PurchaseReturnItemPayload {
+                purchase_invoice_item_id: invoice_item_id,
+                quantity: 6.0,
+            }],
+        },
+    )
+    .unwrap();
+    assert_eq!(full.return_record.discount_cents, 600);
+    assert_eq!(full.return_record.tax_cents, 300);
+    assert_eq!(full.return_record.shipping_cents, 300);
+    assert_eq!(full.return_record.total_cents, 6_000);
+    assert_eq!(
+        conn.query_row(
+            "SELECT current_quantity FROM stock_levels WHERE product_id = ?1",
+            [product.id],
+            |row| row.get::<_, f64>(0)
+        )
+        .unwrap(),
+        0.0
+    );
+    assert_eq!(
+        party_balance(&conn, PartyKind::Supplier, supplier).unwrap(),
+        -2_000,
+        "an already-paid fully returned purchase becomes supplier credit"
+    );
+    let after_full = get_purchase_return_context(&conn, purchase.id).unwrap();
+    assert_eq!(after_full.invoice.returned_cents, 10_000);
+    assert_eq!(after_full.invoice.net_total_cents, 0);
+    assert_eq!(after_full.invoice.remaining_cents, 0);
+    assert_eq!(after_full.invoice.payment_status, "paid");
+}
+
+#[test]
+fn purchase_return_rejects_excess_quantity_without_partial_side_effects() {
+    let conn = test_conn();
+    let user = make_admin(&conn);
+    let supplier = make_supplier(&conn, user, "Quantity Guard Supplier");
+    let product = create_product(
+        &conn,
+        user,
+        round_pipe_payload(Some(supplier), "Quantity Guard Pipe", 1_000, 1_500),
+    )
+    .unwrap();
+    let purchase = create_purchase_invoice(
+        &conn,
+        user,
+        PurchaseInvoicePayload {
+            supplier_id: supplier,
+            invoice_number: Some("PI-RETURN-GUARD".to_string()),
+            invoice_date: today_date(),
+            discount_cents: 0,
+            tax_cents: 0,
+            shipping_cents: 0,
+            paid_cents: 0,
+            notes: None,
+            items: vec![PurchaseItemPayload {
+                product_id: product.id,
+                quantity: 5.0,
+                unit_cost_cents: 1_000,
+            }],
+        },
+    )
+    .unwrap();
+    let invoice_item_id = get_purchase_return_context(&conn, purchase.id)
+        .unwrap()
+        .items[0]
+        .purchase_invoice_item_id;
+    let error = create_purchase_return(
+        &conn,
+        user,
+        PurchaseReturnPayload {
+            purchase_invoice_id: purchase.id,
+            return_date: today_date(),
+            reason: None,
+            notes: None,
+            idempotency_key: "return-too-large-001".to_string(),
+            items: vec![PurchaseReturnItemPayload {
+                purchase_invoice_item_id: invoice_item_id,
+                quantity: 5.001,
+            }],
+        },
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "VALIDATION_ERROR");
+    assert!(error.message.contains("returnable quantity"));
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM purchase_returns", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        0
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT current_quantity FROM stock_levels WHERE product_id = ?1",
+            [product.id],
+            |row| row.get::<_, f64>(0)
+        )
+        .unwrap(),
+        5.0
+    );
+
+    adjust_stock(
+        &conn,
+        user,
+        crate::models::StockAdjustmentPayload {
+            product_id: product.id,
+            transaction_type: "damaged_stock".to_string(),
+            quantity: 4.0,
+            unit_cost_cents: Some(1_000),
+            notes: Some("Only one unit remains physically available".to_string()),
+        },
+    )
+    .unwrap();
+    let insufficient_stock = create_purchase_return(
+        &conn,
+        user,
+        PurchaseReturnPayload {
+            purchase_invoice_id: purchase.id,
+            return_date: today_date(),
+            reason: None,
+            notes: None,
+            idempotency_key: "return-no-stock-001".to_string(),
+            items: vec![PurchaseReturnItemPayload {
+                purchase_invoice_item_id: invoice_item_id,
+                quantity: 2.0,
+            }],
+        },
+    )
+    .unwrap_err();
+    assert_eq!(insufficient_stock.code, "INSUFFICIENT_STOCK");
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM purchase_returns", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        0,
+        "the return record and financial effect must roll back with the stock failure"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT current_quantity FROM stock_levels WHERE product_id = ?1",
+            [product.id],
+            |row| row.get::<_, f64>(0)
+        )
+        .unwrap(),
+        1.0
+    );
+}
+
+#[test]
+fn duplicate_purchase_return_requests_are_idempotent() {
+    let conn = test_conn();
+    let user = make_admin(&conn);
+    let supplier = make_supplier(&conn, user, "Idempotent Supplier");
+    let product = create_product(
+        &conn,
+        user,
+        round_pipe_payload(Some(supplier), "Idempotent Pipe", 700, 1_100),
+    )
+    .unwrap();
+    let purchase = create_purchase_invoice(
+        &conn,
+        user,
+        PurchaseInvoicePayload {
+            supplier_id: supplier,
+            invoice_number: Some("PI-IDEMPOTENT".to_string()),
+            invoice_date: today_date(),
+            discount_cents: 0,
+            tax_cents: 0,
+            shipping_cents: 0,
+            paid_cents: 0,
+            notes: None,
+            items: vec![PurchaseItemPayload {
+                product_id: product.id,
+                quantity: 8.0,
+                unit_cost_cents: 700,
+            }],
+        },
+    )
+    .unwrap();
+    let invoice_item_id = get_purchase_return_context(&conn, purchase.id)
+        .unwrap()
+        .items[0]
+        .purchase_invoice_item_id;
+    let payload = PurchaseReturnPayload {
+        purchase_invoice_id: purchase.id,
+        return_date: today_date(),
+        reason: Some("Duplicate network retry".to_string()),
+        notes: None,
+        idempotency_key: "same-return-request-001".to_string(),
+        items: vec![PurchaseReturnItemPayload {
+            purchase_invoice_item_id: invoice_item_id,
+            quantity: 2.0,
+        }],
+    };
+    let first = create_purchase_return(&conn, user, payload.clone()).unwrap();
+    let retry = create_purchase_return(&conn, user, payload).unwrap();
+    assert_eq!(first.return_record.id, retry.return_record.id);
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM purchase_returns", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM inventory_transactions
+             WHERE purchase_return_id = ?1",
+            [first.return_record.id],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT current_quantity FROM stock_levels WHERE product_id = ?1",
+            [product.id],
+            |row| row.get::<_, f64>(0)
+        )
+        .unwrap(),
+        6.0
+    );
+}
+
+#[test]
+fn cancelling_and_restoring_purchase_return_reverses_effects_once() {
+    let conn = test_conn();
+    let user = make_admin(&conn);
+    let supplier = make_supplier(&conn, user, "Reversal Supplier");
+    let product = create_product(
+        &conn,
+        user,
+        round_pipe_payload(Some(supplier), "Reversal Pipe", 1_000, 1_500),
+    )
+    .unwrap();
+    let purchase = create_purchase_invoice(
+        &conn,
+        user,
+        PurchaseInvoicePayload {
+            supplier_id: supplier,
+            invoice_number: Some("PI-REVERSAL".to_string()),
+            invoice_date: today_date(),
+            discount_cents: 0,
+            tax_cents: 0,
+            shipping_cents: 0,
+            paid_cents: 0,
+            notes: None,
+            items: vec![PurchaseItemPayload {
+                product_id: product.id,
+                quantity: 10.0,
+                unit_cost_cents: 1_000,
+            }],
+        },
+    )
+    .unwrap();
+    let invoice_item_id = get_purchase_return_context(&conn, purchase.id)
+        .unwrap()
+        .items[0]
+        .purchase_invoice_item_id;
+    let purchase_return = create_purchase_return(
+        &conn,
+        user,
+        PurchaseReturnPayload {
+            purchase_invoice_id: purchase.id,
+            return_date: today_date(),
+            reason: None,
+            notes: None,
+            idempotency_key: "return-reversal-001".to_string(),
+            items: vec![PurchaseReturnItemPayload {
+                purchase_invoice_item_id: invoice_item_id,
+                quantity: 3.0,
+            }],
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        party_balance(&conn, PartyKind::Supplier, supplier).unwrap(),
+        7_000
+    );
+
+    cancel_purchase_return(&conn, user, purchase_return.return_record.id).unwrap();
+    cancel_purchase_return(&conn, user, purchase_return.return_record.id).unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT current_quantity FROM stock_levels WHERE product_id = ?1",
+            [product.id],
+            |row| row.get::<_, f64>(0)
+        )
+        .unwrap(),
+        10.0
+    );
+    assert_eq!(
+        party_balance(&conn, PartyKind::Supplier, supplier).unwrap(),
+        10_000
+    );
+
+    restore_purchase_return(&conn, user, purchase_return.return_record.id).unwrap();
+    restore_purchase_return(&conn, user, purchase_return.return_record.id).unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT current_quantity FROM stock_levels WHERE product_id = ?1",
+            [product.id],
+            |row| row.get::<_, f64>(0)
+        )
+        .unwrap(),
+        7.0
+    );
+    assert_eq!(
+        party_balance(&conn, PartyKind::Supplier, supplier).unwrap(),
+        7_000
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM inventory_transactions
+             WHERE purchase_return_id = ?1 AND status = 'active'",
+            [purchase_return.return_record.id],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+    let cancel_invoice_error = cancel_purchase_invoice(&conn, user, purchase.id).unwrap_err();
+    assert!(cancel_invoice_error
+        .message
+        .contains("active purchase returns"));
+}
+
+#[test]
+fn editing_purchase_return_replaces_effects_and_preserves_old_ledger_revision() {
+    let conn = test_conn();
+    let user = make_admin(&conn);
+    let supplier = make_supplier(&conn, user, "Edit Return Supplier");
+    let product = create_product(
+        &conn,
+        user,
+        round_pipe_payload(Some(supplier), "Edit Return Pipe", 1_000, 1_500),
+    )
+    .unwrap();
+    let purchase = create_purchase_invoice(
+        &conn,
+        user,
+        PurchaseInvoicePayload {
+            supplier_id: supplier,
+            invoice_number: Some("PI-EDIT-RETURN".to_string()),
+            invoice_date: today_date(),
+            discount_cents: 0,
+            tax_cents: 0,
+            shipping_cents: 0,
+            paid_cents: 0,
+            notes: None,
+            items: vec![PurchaseItemPayload {
+                product_id: product.id,
+                quantity: 10.0,
+                unit_cost_cents: 1_000,
+            }],
+        },
+    )
+    .unwrap();
+    let invoice_item_id = get_purchase_return_context(&conn, purchase.id)
+        .unwrap()
+        .items[0]
+        .purchase_invoice_item_id;
+    let purchase_return = create_purchase_return(
+        &conn,
+        user,
+        PurchaseReturnPayload {
+            purchase_invoice_id: purchase.id,
+            return_date: today_date(),
+            reason: None,
+            notes: None,
+            idempotency_key: "return-edit-001".to_string(),
+            items: vec![PurchaseReturnItemPayload {
+                purchase_invoice_item_id: invoice_item_id,
+                quantity: 2.0,
+            }],
+        },
+    )
+    .unwrap();
+    update_purchase_return(
+        &conn,
+        user,
+        purchase_return.return_record.id,
+        PurchaseReturnUpdatePayload {
+            return_date: today_date(),
+            reason: Some("Inspection found one more damaged piece".to_string()),
+            notes: None,
+            items: vec![PurchaseReturnItemPayload {
+                purchase_invoice_item_id: invoice_item_id,
+                quantity: 3.0,
+            }],
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT current_quantity FROM stock_levels WHERE product_id = ?1",
+            [product.id],
+            |row| row.get::<_, f64>(0)
+        )
+        .unwrap(),
+        7.0
+    );
+    assert_eq!(
+        party_balance(&conn, PartyKind::Supplier, supplier).unwrap(),
+        7_000
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM inventory_transactions
+             WHERE purchase_return_id = ?1 AND status = 'cancelled'",
+            [purchase_return.return_record.id],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1,
+        "the superseded inventory effect remains as cancelled audit history"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM inventory_transactions
+             WHERE purchase_return_id = ?1 AND status = 'active'",
+            [purchase_return.return_record.id],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM purchase_return_items
+             WHERE purchase_return_id = ?1 AND status = 'superseded'",
+            [purchase_return.return_record.id],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+    cancel_purchase_return(&conn, user, purchase_return.return_record.id).unwrap();
+    restore_purchase_return(&conn, user, purchase_return.return_record.id).unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT current_quantity FROM stock_levels WHERE product_id = ?1",
+            [product.id],
+            |row| row.get::<_, f64>(0)
+        )
+        .unwrap(),
+        7.0,
+        "restoring an edited return must not reactivate its superseded revision"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM inventory_transactions
+             WHERE purchase_return_id = ?1 AND status = 'active'",
+            [purchase_return.return_record.id],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn stock_reports_expose_name_thickness_price_and_render_them_in_that_order() {
+    let conn = test_conn();
+    let user = make_admin(&conn);
+    let supplier = make_supplier(&conn, user, "Report Order Supplier");
+    create_product(
+        &conn,
+        user,
+        round_pipe_payload(Some(supplier), "Ordered Pipe", 1_000, 1_750),
+    )
+    .unwrap();
+    let count_rows = stock_count_report(&conn, ReportFilters::default()).unwrap();
+    let row = count_rows
+        .iter()
+        .find(|row| row["product_name"] == "Ordered Pipe")
+        .unwrap();
+    assert_eq!(row["thickness_mm"], 2.0);
+    assert_eq!(row["selling_price_cents"], 1_750);
+
+    let report_source = include_str!("../../src/features/reports/ReportsPage.tsx");
+    let order_position = report_source
+        .find(r#"["product_name", "thickness_mm", "selling_price_cents"]"#)
+        .expect("stock report column order must be explicit");
+    let print_position = report_source
+        .find("<th>Name</th><th>Thickness</th><th>Price</th>")
+        .expect("stock count print order must match the table/export order");
+    assert!(order_position < print_position);
 }

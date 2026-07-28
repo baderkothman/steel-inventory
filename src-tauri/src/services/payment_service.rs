@@ -2,7 +2,10 @@ use rusqlite::{params, Connection};
 
 use crate::{
     models::{PaymentFilters, PaymentPayload, PaymentRow},
-    services::settings_service::get_company_settings,
+    services::{
+        purchase_return_service::recalculate_purchase_invoice_accounting,
+        settings_service::get_company_settings,
+    },
     utils::{
         audit::insert_audit_log,
         dates::{now_iso, validate_date},
@@ -59,6 +62,14 @@ pub fn create_payment(
     validate_payment_payload(&payload)?;
     let direction = direction_for_party(&payload.party_type)?;
     ensure_payment_party_exists(conn, &payload.party_type, payload.party_id)?;
+    validate_linked_payment_capacity(
+        conn,
+        &payload.party_type,
+        payload.party_id,
+        payload.reference_type.as_deref(),
+        payload.reference_id,
+        payload.amount_cents,
+    )?;
     let settings = get_company_settings(conn)?;
     let currency = if payload.currency.trim().is_empty() {
         settings.default_currency
@@ -164,6 +175,16 @@ pub fn restore_payment(conn: &Connection, user_id: i64, id: i64) -> Result<(), A
             ));
         }
     }
+    if payment.reference_type.as_deref() != Some("purchase_invoice") {
+        validate_linked_payment_capacity(
+            conn,
+            &payment.party_type,
+            payment.party_id,
+            payment.reference_type.as_deref(),
+            payment.reference_id,
+            payment.amount_cents,
+        )?;
+    }
     let tx = conn.unchecked_transaction()?;
     tx.execute(
         "UPDATE payments
@@ -255,6 +276,20 @@ fn recalculate_linked_invoice_payment(
             "Payment party type does not match invoice reference.",
         ));
     }
+    if reference_type == "purchase_invoice" {
+        let valid: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM purchase_invoices
+             WHERE id = ?1 AND supplier_id = ?2 AND status = 'active'",
+            params![reference_id, party_id],
+            |row| row.get(0),
+        )?;
+        if valid == 0 {
+            return Err(AppError::validation(
+                "Linked invoice does not belong to this party or is no longer active.",
+            ));
+        }
+        return recalculate_purchase_invoice_accounting(conn, reference_id);
+    }
 
     let sql = format!(
         "SELECT total_cents
@@ -296,6 +331,60 @@ fn recalculate_linked_invoice_payment(
         &sql,
         params![paid, remaining, status, now_iso(), reference_id],
     )?;
+    Ok(())
+}
+
+fn validate_linked_payment_capacity(
+    conn: &Connection,
+    party_type: &str,
+    party_id: i64,
+    reference_type: Option<&str>,
+    reference_id: Option<i64>,
+    amount_cents: i64,
+) -> Result<(), AppError> {
+    let (Some(reference_type), Some(reference_id)) = (reference_type, reference_id) else {
+        return Ok(());
+    };
+    let (table, party_column, status_filter, expected_party) = match reference_type {
+        "purchase_invoice" => (
+            "purchase_invoices",
+            "supplier_id",
+            "status = 'active'",
+            "supplier",
+        ),
+        "sales_invoice" => (
+            "sales_invoices",
+            "customer_id",
+            "sales_status = 'completed'",
+            "customer",
+        ),
+        _ => return Err(AppError::validation("Invalid invoice reference type.")),
+    };
+    if party_type != expected_party {
+        return Err(AppError::validation(
+            "Payment party type does not match invoice reference.",
+        ));
+    }
+    let remaining: i64 = conn
+        .query_row(
+            &format!(
+                "SELECT remaining_cents FROM {table}
+                 WHERE id = ?1 AND {party_column} = ?2 AND {status_filter}"
+            ),
+            params![reference_id, party_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => AppError::validation(
+                "Linked invoice does not belong to this party or is no longer active.",
+            ),
+            other => other.into(),
+        })?;
+    if amount_cents > remaining {
+        return Err(AppError::validation(
+            "Payment amount cannot exceed the remaining invoice balance.",
+        ));
+    }
     Ok(())
 }
 

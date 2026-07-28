@@ -7,6 +7,7 @@ pub mod invoice_payment_commands;
 pub mod payment_commands;
 pub mod product_commands;
 pub mod purchase_commands;
+pub mod purchase_return_commands;
 pub mod report_commands;
 pub mod sales_commands;
 pub mod settings_commands;

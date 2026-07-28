@@ -23,6 +23,7 @@ import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import PaymentsOutlinedIcon from "@mui/icons-material/PaymentsOutlined";
 import PrintIcon from "@mui/icons-material/Print";
+import AssignmentReturnOutlinedIcon from "@mui/icons-material/AssignmentReturnOutlined";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { MoneyText } from "../../components/MoneyText";
@@ -51,6 +52,7 @@ import { normalizeError } from "../../lib/tauri";
 import type { InvoiceListRow } from "../../types/invoice";
 import type { InstallmentPaymentPayload, InstallmentPaymentRow } from "../../types/payment";
 import type { Product } from "../../types/product";
+import { PurchaseReturnDialog } from "./PurchaseReturnDialog";
 
 type Kind = "purchase" | "sales";
 type InvoiceItemForm = {
@@ -97,6 +99,7 @@ function InvoicePage({ kind }: { kind: Kind }) {
   const [form, setForm] = useState<InvoiceForm | null>(null);
   const [cancelId, setCancelId] = useState<number | null>(null);
   const [paymentInvoiceId, setPaymentInvoiceId] = useState<number | null>(null);
+  const [returnInvoiceId, setReturnInvoiceId] = useState<number | null>(null);
   const [printHtml, setPrintHtml] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [cancelError, setCancelError] = useState<string | null>(null);
@@ -112,6 +115,10 @@ function InvoicePage({ kind }: { kind: Kind }) {
     { id: "date", label: "Date", value: (row) => row.invoice_date, width: 110 },
     { id: "party", label: kind === "purchase" ? "Supplier" : "Customer", value: (row) => row.party_name, minWidth: 150 },
     { id: "total", label: "Total", value: (row) => money(row.total_cents, settings?.default_currency), render: (row) => <MoneyText value={row.total_cents} currency={settings?.default_currency} />, align: "right", minWidth: 100 },
+    ...(kind === "purchase" ? [
+      { id: "returned", label: "Returned", value: (row: InvoiceListRow) => money(row.returned_cents, settings?.default_currency), render: (row: InvoiceListRow) => <MoneyText value={row.returned_cents} currency={settings?.default_currency} />, align: "right" as const, minWidth: 100 },
+      { id: "net", label: "Net purchase", value: (row: InvoiceListRow) => money(row.net_total_cents, settings?.default_currency), render: (row: InvoiceListRow) => <MoneyText value={row.net_total_cents} currency={settings?.default_currency} />, align: "right" as const, minWidth: 110 }
+    ] : []),
     { id: "paid", label: "Paid", value: (row) => money(row.paid_cents, settings?.default_currency), render: (row) => <MoneyText value={row.paid_cents} currency={settings?.default_currency} />, align: "right", minWidth: 100 },
     { id: "remaining", label: "Remaining", value: (row) => money(row.remaining_cents, settings?.default_currency), render: (row) => <MoneyText value={row.remaining_cents} currency={settings?.default_currency} />, align: "right", minWidth: 100 },
     { id: "status", label: "Payment", value: (row) => row.payment_status, render: (row) => <StatusBadge value={row.payment_status} />, width: 105 }
@@ -205,6 +212,11 @@ function InvoicePage({ kind }: { kind: Kind }) {
             icon: <PaymentsOutlinedIcon fontSize="small" />,
             onClick: () => setPaymentInvoiceId(row.id)
           },
+          ...(kind === "purchase" ? [{
+            label: "Create purchase return",
+            icon: <AssignmentReturnOutlinedIcon fontSize="small" />,
+            onClick: () => setReturnInvoiceId(row.id)
+          }] : []),
           { label: "Delete", icon: <DeleteIcon fontSize="small" />, destructive: true, onClick: () => { setCancelError(null); setCancelId(row.id); } }
         ]}
       />
@@ -242,6 +254,11 @@ function InvoicePage({ kind }: { kind: Kind }) {
         invoice={paymentInvoice}
         currency={settings?.default_currency}
         onClose={() => setPaymentInvoiceId(null)}
+      />
+      <PurchaseReturnDialog
+        invoiceId={returnInvoiceId}
+        currency={settings?.default_currency}
+        onClose={() => setReturnInvoiceId(null)}
       />
       <PrintDialog open={Boolean(printHtml)} html={printHtml} onClose={() => setPrintHtml("")} />
     </Stack>

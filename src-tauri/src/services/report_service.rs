@@ -191,6 +191,8 @@ pub fn purchase_report(conn: &Connection, filters: ReportFilters) -> Result<Vec<
                 "invoice": row.invoice_number,
                 "supplier": row.party_name,
                 "total_cents": row.total_cents,
+                "returned_cents": row.returned_cents,
+                "net_total_cents": row.net_total_cents,
                 "paid_cents": row.paid_cents,
                 "remaining_cents": row.remaining_cents,
                 "payment_status": row.payment_status,
@@ -328,7 +330,9 @@ pub fn stock_count_report(
         .filter(|p| !low_only || p.current_quantity <= p.minimum_quantity)
         .map(|p| {
             json!({
-                "product": p.name,
+                "product_name": p.name,
+                "thickness_mm": p.thickness_mm,
+                "selling_price_cents": p.selling_price_cents,
                 "supplier": p.supplier_name,
                 "category": p.category_name,
                 "location": p.location.clone().unwrap_or_default(),

@@ -357,7 +357,7 @@ pub fn list_sales_invoices(
     let mut stmt = conn.prepare(
         "SELECT si.id, si.customer_id, si.invoice_number, si.invoice_date, COALESCE(c.name, 'Walk-in Customer'),
                 si.subtotal_cents, si.discount_cents, si.tax_cents, si.delivery_cents,
-                si.total_cents, si.paid_cents, si.remaining_cents, si.payment_status,
+                si.total_cents, 0, si.total_cents, si.paid_cents, si.remaining_cents, si.payment_status,
                 si.sales_status, si.notes, si.created_at, si.deleted_at
          FROM sales_invoices si
          LEFT JOIN customers c ON c.id = si.customer_id
@@ -392,7 +392,7 @@ pub fn get_sales_invoice(conn: &Connection, id: i64) -> Result<InvoiceDetail, Ap
         .query_row(
             "SELECT si.id, si.customer_id, si.invoice_number, si.invoice_date, COALESCE(c.name, 'Walk-in Customer'),
                     si.subtotal_cents, si.discount_cents, si.tax_cents, si.delivery_cents,
-                    si.total_cents, si.paid_cents, si.remaining_cents, si.payment_status,
+                    si.total_cents, 0, si.total_cents, si.paid_cents, si.remaining_cents, si.payment_status,
                     si.sales_status, si.notes, si.created_at, si.deleted_at
              FROM sales_invoices si
              LEFT JOIN customers c ON c.id = si.customer_id
@@ -501,13 +501,15 @@ fn map_invoice_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<InvoiceListRow> 
         tax_cents: row.get(7)?,
         extra_cents: row.get(8)?,
         total_cents: row.get(9)?,
-        paid_cents: row.get(10)?,
-        remaining_cents: row.get(11)?,
-        payment_status: row.get(12)?,
-        status: row.get(13)?,
-        notes: row.get(14)?,
-        created_at: row.get(15)?,
-        deleted_at: row.get(16)?,
+        returned_cents: row.get(10)?,
+        net_total_cents: row.get(11)?,
+        paid_cents: row.get(12)?,
+        remaining_cents: row.get(13)?,
+        payment_status: row.get(14)?,
+        status: row.get(15)?,
+        notes: row.get(16)?,
+        created_at: row.get(17)?,
+        deleted_at: row.get(18)?,
     })
 }
 

@@ -87,6 +87,17 @@ impl AppState {
     pub fn require_user_id(&self) -> Result<i64, AppError> {
         Ok(self.require_user()?.id)
     }
+
+    pub fn require_admin_id(&self) -> Result<i64, AppError> {
+        let user = self.require_user()?;
+        if user.role != "admin" {
+            return Err(AppError::new(
+                "FORBIDDEN",
+                "Administrator permission is required for purchase returns.",
+            ));
+        }
+        Ok(user.id)
+    }
 }
 
 fn database_path() -> Result<PathBuf, AppError> {

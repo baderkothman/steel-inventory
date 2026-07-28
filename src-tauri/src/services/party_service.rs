@@ -360,7 +360,17 @@ pub fn party_balance(conn: &Connection, kind: PartyKind, id: i64) -> Result<i64,
         params![kind.payment_party_type(), id, kind.payment_direction()],
         |row| row.get(0),
     )?;
-    Ok(opening + invoice_total - payment_total)
+    let return_total = match kind {
+        PartyKind::Supplier => conn.query_row(
+            "SELECT COALESCE(SUM(total_cents), 0)
+             FROM purchase_returns
+             WHERE supplier_id = ?1 AND status = 'active'",
+            [id],
+            |row| row.get(0),
+        )?,
+        PartyKind::Customer => 0,
+    };
+    Ok(opening + invoice_total - return_total - payment_total)
 }
 
 pub fn statement(
@@ -385,6 +395,9 @@ pub fn statement(
 
     if let Some(date_from) = filters.date_from.as_deref() {
         running_balance += prior_invoice_total(conn, kind, id, date_from)?;
+        if matches!(kind, PartyKind::Supplier) {
+            running_balance -= prior_purchase_return_total(conn, id, date_from)?;
+        }
         running_balance -= prior_payment_total(conn, kind, id, date_from)?;
     }
 
@@ -474,6 +487,30 @@ pub fn statement(
             amount,
         )
     }));
+    if matches!(kind, PartyKind::Supplier) {
+        let mut return_stmt = conn.prepare(
+            "SELECT return_date, return_number, total_cents
+             FROM purchase_returns
+             WHERE supplier_id = ?1 AND status = 'active'
+               AND (?2 IS NULL OR date(return_date) >= date(?2))
+               AND (?3 IS NULL OR date(return_date) <= date(?3))
+             ORDER BY return_date, id",
+        )?;
+        let return_rows = return_stmt
+            .query_map(params![id, filters.date_from, filters.date_to], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        entries.extend(
+            return_rows.into_iter().map(|(date, number, total)| {
+                (date, "Purchase Return".to_string(), number, 0, total)
+            }),
+        );
+    }
     entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
 
     for (date, entry_type, reference, debit, credit) in entries {
@@ -531,6 +568,22 @@ fn prior_payment_total(
             kind.payment_direction(),
             date_from
         ],
+        |row| row.get(0),
+    )
+    .map_err(Into::into)
+}
+
+fn prior_purchase_return_total(
+    conn: &Connection,
+    supplier_id: i64,
+    date_from: &str,
+) -> Result<i64, AppError> {
+    conn.query_row(
+        "SELECT COALESCE(SUM(total_cents), 0)
+         FROM purchase_returns
+         WHERE supplier_id = ?1 AND status = 'active'
+           AND date(return_date) < date(?2)",
+        params![supplier_id, date_from],
         |row| row.get(0),
     )
     .map_err(Into::into)

@@ -50,7 +50,13 @@ export function ReportsPage() {
     queryFn: () => runReport(report, filters)
   });
 
-  const columns = useMemo(() => Array.from(new Set(data.flatMap((row) => Object.keys(row)))), [data]);
+  const columns = useMemo(
+    () => orderReportColumns(
+      report,
+      Array.from(new Set(data.flatMap((row) => Object.keys(row))))
+    ),
+    [data, report]
+  );
   const reportTitle = reportOptions.find((option) => option.value === report)?.label ?? "Report";
   const tableRows = useMemo(() => data.map((row, index) => ({ id: index, data: row })), [data]);
   const tableColumns = useMemo<TableColumn<{ id: number; data: ReportRow }>[]>(() =>
@@ -159,7 +165,19 @@ function runReport(report: ReportKey, filters: ReportFilters): Promise<ReportRow
 }
 
 function label(value: string) {
+  if (value === "product_name") return "Name";
+  if (value === "thickness_mm") return "Thickness";
+  if (value === "selling_price_cents") return "Price";
   return value.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+export function orderReportColumns(report: ReportKey, columns: string[]) {
+  if (report !== "stock" && report !== "stock_count") return columns;
+  const productOrder = ["product_name", "thickness_mm", "selling_price_cents"];
+  return [
+    ...productOrder.filter((column) => columns.includes(column)),
+    ...columns.filter((column) => !productOrder.includes(column))
+  ];
 }
 
 function formatCell(column: string, value: unknown, currency: string) {
@@ -171,6 +189,7 @@ function formatCell(column: string, value: unknown, currency: string) {
 
 function numericReportColumn(column: string) {
   return column.endsWith("_cents")
+    || column.endsWith("_mm")
     || column.includes("quantity")
     || column.includes("amount")
     || column.includes("total")
@@ -197,7 +216,9 @@ function buildStockCountSheet(
   const body = rows
     .map(
       (row) => `<tr>
-        <td>${escapeHtml(row.product)}</td>
+        <td>${escapeHtml(row.product_name)}</td>
+        <td class="num">${escapeHtml(row.thickness_mm)}</td>
+        <td class="num">${escapeHtml(formatCell("selling_price_cents", row.selling_price_cents, settings?.default_currency ?? "USD"))}</td>
         <td>${escapeHtml(row.supplier)}</td>
         <td>${escapeHtml(row.category)}</td>
         <td>${escapeHtml(row.location)}</td>
@@ -235,10 +256,10 @@ function buildStockCountSheet(
   </div>
   <table>
     <thead><tr>
-      <th>Product</th><th>Supplier</th><th>Category</th><th>Location</th>
+      <th>Name</th><th>Thickness</th><th>Price</th><th>Supplier</th><th>Category</th><th>Location</th>
       <th>Unit</th><th>System Qty</th><th>Counted Qty</th><th>Difference</th>
     </tr></thead>
-    <tbody>${body || '<tr><td colspan="8">No products.</td></tr>'}</tbody>
+    <tbody>${body || '<tr><td colspan="10">No products.</td></tr>'}</tbody>
   </table>
   <div class="sign"><div>Prepared by: ______________________</div><div>Checked by: ______________________</div></div>
   <footer><span>Physical Stock Count Sheet</span><span class="page">Page </span></footer>

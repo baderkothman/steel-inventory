@@ -11,8 +11,8 @@ mod tests;
 use commands::{
     auth_commands::*, backup_commands::*, category_commands::*, customer_commands::*,
     expense_commands::*, invoice_payment_commands::*, payment_commands::*, product_commands::*,
-    purchase_commands::*, report_commands::*, sales_commands::*, settings_commands::*,
-    settlement_commands::*, supplier_commands::*,
+    purchase_commands::*, purchase_return_commands::*, report_commands::*, sales_commands::*,
+    settings_commands::*, settlement_commands::*, supplier_commands::*,
 };
 use state::AppState;
 
@@ -76,6 +76,13 @@ pub fn run() {
             get_purchase_invoice,
             list_purchase_invoices,
             print_purchase_invoice,
+            get_purchase_return_context,
+            get_purchase_return,
+            create_purchase_return,
+            update_purchase_return,
+            cancel_purchase_return,
+            restore_purchase_return,
+            print_purchase_return,
             create_sales_invoice,
             cancel_sales_invoice,
             restore_sales_invoice,
