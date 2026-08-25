@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { ReactNode, useMemo, useState } from "react";
 import {
   Button,
   MenuItem,
@@ -13,12 +13,11 @@ import { PageHeader } from "../../components/PageHeader";
 import { PrintDialog } from "../../components/print/PrintDialog";
 import { EnterpriseTable, type TableColumn } from "../../components/table/EnterpriseTable";
 import { reportOptions } from "../../lib/constants";
+import { orderReportColumns, type ReportKey } from "./reportColumns";
 import { money, today } from "../../lib/formatters";
 import { categoryApi, reportApi, settingsApi, supplierApi } from "../../lib/api";
 import type { CompanySettings } from "../../types/common";
 import type { ReportFilters, ReportRow } from "../../types/report";
-
-type ReportKey = (typeof reportOptions)[number]["value"];
 
 const supplierReports: ReportKey[] = [
   "stock",
@@ -110,7 +109,10 @@ export function ReportsPage() {
             <TextField select label="Category" value={filters.category_id ?? ""} sx={{ minWidth: 200 }}
               onChange={(e) => setFilters((current) => ({ ...current, category_id: e.target.value ? Number(e.target.value) : null }))}>
               <MenuItem value="">All categories</MenuItem>
-              {categories.filter((c) => c.is_active).map((c) => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}
+              {categories.reduce<ReactNode[]>((options, c) => {
+                if (c.is_active) options.push(<MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>);
+                return options;
+              }, [])}
             </TextField>
           ) : null}
           {report === "stock_count" ? (
@@ -169,15 +171,6 @@ function label(value: string) {
   if (value === "thickness_mm") return "Thickness";
   if (value === "selling_price_cents") return "Price";
   return value.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-export function orderReportColumns(report: ReportKey, columns: string[]) {
-  if (report !== "stock" && report !== "stock_count") return columns;
-  const productOrder = ["product_name", "thickness_mm", "selling_price_cents"];
-  return [
-    ...productOrder.filter((column) => columns.includes(column)),
-    ...columns.filter((column) => !productOrder.includes(column))
-  ];
 }
 
 function formatCell(column: string, value: unknown, currency: string) {

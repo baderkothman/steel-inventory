@@ -31,9 +31,6 @@ import type {
   InventoryTransaction,
   Product,
   ProductPayload,
-  SettlementFilters,
-  SettlementPayment,
-  SettlementPaymentPayload,
   SupplierVariant,
   VariantFilters
 } from "../types/product";
@@ -87,15 +84,6 @@ export const productApi = {
   generateSku: (payload: ProductPayload) => call<string>("generate_product_sku", { payload }),
   supplierVariants: (filters: VariantFilters = {}) =>
     call<SupplierVariant[]>("list_supplier_variants", { filters })
-};
-
-export const settlementApi = {
-  list: (filters: SettlementFilters = {}) => call<SettlementPayment[]>("list_settlement_payments", { filters }),
-  create: (payload: SettlementPaymentPayload) => call<SettlementPayment>("create_settlement_payment", { payload }),
-  cancel: (id: number) => call<void>("delete_settlement_payment", { id }),
-  restore: (id: number) => call<void>("restore_settlement_payment", { id }),
-  permanentlyDelete: (id: number) =>
-    call<void>("permanently_delete_settlement_payment", { id })
 };
 
 function partyApi(kind: "supplier" | "customer") {

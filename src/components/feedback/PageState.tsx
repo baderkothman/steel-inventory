@@ -1,4 +1,4 @@
-import { Alert, Box, Skeleton, Stack, Typography } from "@mui/material";
+import { Box, Skeleton, Stack, Typography } from "@mui/material";
 
 export function LoadingState({ label = "Loading" }: { label?: string }) {
   return (
@@ -19,8 +19,4 @@ export function EmptyState({ label }: { label: string }) {
       <Typography>{label}</Typography>
     </Box>
   );
-}
-
-export function ErrorState({ message }: { message: string }) {
-  return <Alert severity="error">{message}</Alert>;
 }

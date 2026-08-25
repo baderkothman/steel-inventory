@@ -137,7 +137,7 @@ The service validates party type, payment direction, and any invoice link both i
 - `get_supplier_settlement_report`
 - `get_supplier_settlement_summary`
 
-The settlement-payment mutations are available through `settlementApi`, but the current UI does not provide a dedicated settlement-entry page.
+The settlement-payment commands are exposed by the Rust backend, but the frontend has no `settlementApi` binding and no dedicated settlement-entry page.
 
 ## Dashboard and reports
 

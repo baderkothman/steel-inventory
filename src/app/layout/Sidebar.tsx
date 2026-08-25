@@ -50,15 +50,13 @@ export function Sidebar() {
   });
 
   function toggleSidebar() {
-    setCollapsed((current) => {
-      const next = !current;
-      try {
-        window.localStorage.setItem("steel-inventory.sidebar-collapsed", String(next));
-      } catch {
-        // The preference is optional when storage is unavailable.
-      }
-      return next;
-    });
+    const next = !collapsed;
+    setCollapsed(next);
+    try {
+      window.localStorage.setItem("steel-inventory.sidebar-collapsed", String(next));
+    } catch {
+      // The preference is optional when storage is unavailable.
+    }
   }
 
   return (

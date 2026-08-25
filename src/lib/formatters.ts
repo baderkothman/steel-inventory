@@ -1,20 +1,42 @@
+// Static options, so this is built once for the process.
+const decimalFormatter = new Intl.NumberFormat(undefined, {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2
+});
+
+// Currency options vary per call, so formatters are cached by code instead of
+// hoisted. A code the runtime rejects — e.g. a 3-decimal currency such as KWD,
+// which cannot satisfy maximumFractionDigits: 2 — is cached as null so the
+// RangeError is paid once rather than on every format.
+const currencyFormatters = new Map<string, Intl.NumberFormat | null>();
+
+function currencyFormatter(code: string) {
+  const cached = currencyFormatters.get(code);
+  if (cached !== undefined) return cached;
+
+  let formatter: Intl.NumberFormat | null;
+  try {
+    formatter = new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: code,
+      maximumFractionDigits: 2
+    });
+  } catch {
+    formatter = null;
+  }
+  currencyFormatters.set(code, formatter);
+  return formatter;
+}
+
 export function money(cents?: number | null, currency = "USD") {
   const value = (cents ?? 0) / 100;
   const code = currency.trim().toUpperCase();
 
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: "currency",
-      currency: code || "USD",
-      maximumFractionDigits: 2
-    }).format(value);
-  } catch {
-    const formatted = new Intl.NumberFormat(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    }).format(value);
-    return code ? `${formatted} ${code}` : formatted;
-  }
+  const formatter = currencyFormatter(code || "USD");
+  if (formatter) return formatter.format(value);
+
+  const formatted = decimalFormatter.format(value);
+  return code ? `${formatted} ${code}` : formatted;
 }
 
 export function isCurrencyCode(value: string) {

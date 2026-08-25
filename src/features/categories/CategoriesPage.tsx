@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, ReactNode, useMemo, useState } from "react";
 import {
   Alert,
   Button,
@@ -138,13 +138,16 @@ export function CategoriesPage() {
               }
             >
               <MenuItem value="">Root</MenuItem>
-              {activeCategories
-                .filter((category) => category.id !== form?.id)
-                .map((category) => (
-                  <MenuItem key={category.id} value={category.id}>
-                    {category.name}
-                  </MenuItem>
-                ))}
+              {activeCategories.reduce<ReactNode[]>((options, category) => {
+                if (category.id !== form?.id) {
+                  options.push(
+                    <MenuItem key={category.id} value={category.id}>
+                      {category.name}
+                    </MenuItem>
+                  );
+                }
+                return options;
+              }, [])}
             </TextField>
             <TextField
               label="Description"

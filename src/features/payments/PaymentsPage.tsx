@@ -58,7 +58,7 @@ export function PaymentsPage() {
     { id: "reference", label: "Reference", value: (row) => row.reference_type ? `${row.reference_type.replace(/_/g, " ")} #${row.reference_id}` : "General", minWidth: 170 }
   ], []);
 
-  const partyOptions = useMemo(() => form?.party_type === "supplier" ? suppliers : customers, [customers, form?.party_type, suppliers]);
+  const partyOptions = form?.party_type === "supplier" ? suppliers : customers;
 
   const saveMutation = useMutation({
     mutationFn: (value: PaymentForm) => paymentApi.create({ ...value, party_id: value.party_id || partyOptions[0]?.id || 0, amount_cents: toCents(value.amount) }),

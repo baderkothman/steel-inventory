@@ -173,7 +173,7 @@ function ExpensePaymentDialog({
   const queryClient = useQueryClient();
   const [amount, setAmount] = useState("0.00");
   const [paymentMethod, setPaymentMethod] = useState("cash");
-  const [paymentDate, setPaymentDate] = useState(today());
+  const [paymentDate, setPaymentDate] = useState(() => today());
   const [notes, setNotes] = useState("");
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const { data: payments = [], isLoading } = useQuery({

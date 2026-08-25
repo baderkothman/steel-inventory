@@ -87,6 +87,20 @@ type EnterpriseTableProps<T> = {
   fillHeight?: boolean;
 };
 
+// Loading placeholders have no domain identity, so each slot gets a fixed id.
+// These are module constants, so a slot keeps the same key as the placeholder
+// count changes with rowsPerPage.
+const SKELETON_ROW_IDS = [
+  "skeleton-1",
+  "skeleton-2",
+  "skeleton-3",
+  "skeleton-4",
+  "skeleton-5",
+  "skeleton-6",
+  "skeleton-7",
+  "skeleton-8"
+] as const;
+
 export function EnterpriseTable<T>({
   rows,
   columns,
@@ -114,8 +128,11 @@ export function EnterpriseTable<T>({
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(pageSize);
   const [selected, setSelected] = useState<Set<number | string>>(new Set());
-  const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(
-    new Set(columns.filter((column) => column.defaultHidden).map((column) => column.id))
+  const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(() =>
+    columns.reduce(
+      (hidden, column) => (column.defaultHidden ? hidden.add(column.id) : hidden),
+      new Set<string>()
+    )
   );
   const [columnsAnchor, setColumnsAnchor] = useState<HTMLElement | null>(null);
   const [exportAnchor, setExportAnchor] = useState<HTMLElement | null>(null);
@@ -234,122 +251,41 @@ export function EnterpriseTable<T>({
         ...(fillHeight ? { height: "100%", display: "flex", flexDirection: "column" } : {})
       }}
     >
-      <Stack
-        direction={{ xs: "column", md: "row" }}
-        alignItems={{ xs: "stretch", md: "center" }}
-        justifyContent="space-between"
-        gap={1.25}
-        sx={{ px: 1.5, py: 1.25, borderBottom: "1px solid", borderColor: "divider" }}
-        className="print-exclude"
-      >
-        <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0, flex: 1 }}>
-          {searchable ? (
-            <TextField
-              value={search}
-              onChange={(event) => {
-                setSearch(event.target.value);
-                setPage(0);
-              }}
-              placeholder={searchPlaceholder}
-              aria-label={searchPlaceholder}
-              InputProps={{ startAdornment: <SearchIcon color="action" sx={{ mr: 1, fontSize: 20 }} /> }}
-              sx={{ width: { xs: "100%", md: 300 } }}
-            />
-          ) : null}
-          {selected.size ? (
-            <Typography variant="body2" color="primary.main" fontWeight={700} whiteSpace="nowrap">
-              {selected.size} selected
-            </Typography>
-          ) : null}
-          {toolbarExtras}
-        </Stack>
-        <Stack direction="row" spacing={0.5} justifyContent="flex-end" flexWrap="wrap">
-          <Tooltip title="Choose visible columns">
-            <Button
-              size="small"
-              startIcon={<ViewColumnOutlinedIcon />}
-              onClick={(event) => setColumnsAnchor(event.currentTarget)}
-            >
-              Columns
-            </Button>
-          </Tooltip>
-          <Button
-            size="small"
-            startIcon={exporting ? <CircularProgress size={16} /> : <DownloadOutlinedIcon />}
-            disabled={!exportRows.length || Boolean(exporting)}
-            onClick={(event) => setExportAnchor(event.currentTarget)}
-          >
-            {exporting ? `Exporting ${exporting}…` : "Export"}
-          </Button>
-          <Button
-            size="small"
-            startIcon={<PrintOutlinedIcon />}
-            disabled={!exportRows.length}
-            onClick={() => setPrintHtml(buildTablePrintDocument(exportData()))}
-          >
-            Print
-          </Button>
-        </Stack>
-      </Stack>
+      <TableToolbar
+        searchable={searchable}
+        search={search}
+        searchPlaceholder={searchPlaceholder}
+        onSearchChange={(value) => {
+          setSearch(value);
+          setPage(0);
+        }}
+        selectedCount={selected.size}
+        toolbarExtras={toolbarExtras}
+        exporting={exporting}
+        exportDisabled={!exportRows.length}
+        onOpenColumns={setColumnsAnchor}
+        onOpenExport={setExportAnchor}
+        onPrint={() => setPrintHtml(buildTablePrintDocument(exportData()))}
+      />
 
       <TableContainer sx={{ maxHeight, overflow: "auto", width: "100%", ...(fillHeight ? { flex: 1 } : {}) }}>
         <Table stickyHeader size={compact ? "small" : "medium"} aria-label={title} sx={{ width: "100%" }}>
-          <TableHead>
-            <TableRow>
-              {selectable ? (
-                <TableCell padding="checkbox" sx={{ width: 48 }}>
-                  <Checkbox
-                    size="small"
-                    checked={allPageSelected}
-                    indeterminate={!allPageSelected && visiblePage.some((row) => selected.has(rowId(row)))}
-                    onChange={togglePageSelection}
-                    inputProps={{ "aria-label": `Select visible ${title.toLowerCase()}` }}
-                  />
-                </TableCell>
-              ) : null}
-              {visibleColumns.map((column) => (
-                <TableCell
-                  key={column.id}
-                  align={column.align}
-                  sortDirection={sortColumn === column.id ? sortDirection : false}
-                  sx={{ minWidth: column.minWidth, width: column.width }}
-                >
-                  {column.sortable === false ? (
-                    column.label
-                  ) : (
-                    <TableSortLabel
-                      active={sortColumn === column.id}
-                      direction={sortColumn === column.id ? sortDirection : "asc"}
-                      onClick={() => toggleSort(column)}
-                    >
-                      {column.label}
-                    </TableSortLabel>
-                  )}
-                </TableCell>
-              ))}
-              {actions ? (
-                <TableCell
-                  align="right"
-                  className="print-exclude sticky-actions"
-                  sx={{
-                    position: "sticky",
-                    right: 0,
-                    zIndex: 5,
-                    width: 76,
-                    minWidth: 76,
-                    bgcolor: "#f2f6f7",
-                    boxShadow: "-8px 0 10px -10px rgba(22,32,42,0.65)"
-                  }}
-                >
-                  Actions
-                </TableCell>
-              ) : null}
-            </TableRow>
-          </TableHead>
+          <TableHeaderRow
+            title={title}
+            columns={visibleColumns}
+            selectable={selectable}
+            allSelected={allPageSelected}
+            someSelected={!allPageSelected && visiblePage.some((row) => selected.has(rowId(row)))}
+            onToggleAll={togglePageSelection}
+            sortColumn={sortColumn}
+            sortDirection={sortDirection}
+            onSort={toggleSort}
+            hasActions={Boolean(actions)}
+          />
           <TableBody>
             {loading
-              ? Array.from({ length: Math.min(rowsPerPage, 8) }, (_, index) => (
-                  <TableRow key={index}>
+              ? SKELETON_ROW_IDS.slice(0, Math.min(rowsPerPage, SKELETON_ROW_IDS.length)).map((skeletonId) => (
+                  <TableRow key={skeletonId}>
                     {selectable ? <TableCell padding="checkbox"><Skeleton variant="rounded" width={18} height={18} /></TableCell> : null}
                     {visibleColumns.map((column) => <TableCell key={column.id}><Skeleton /></TableCell>)}
                     {actions ? (
@@ -425,12 +361,11 @@ export function EnterpriseTable<T>({
           </TableBody>
         </Table>
         {!loading && !sortedRows.length ? (
-          <Box sx={{ px: 3, py: 7, textAlign: "center" }}>
-            <Typography variant="h6">{search ? "No matching records" : emptyTitle}</Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
-              {search ? "Try a different search term or clear the search field." : emptyDescription}
-            </Typography>
-          </Box>
+          <TableEmptyState
+            searching={Boolean(search)}
+            title={emptyTitle}
+            description={emptyDescription}
+          />
         ) : null}
       </TableContainer>
       <TablePagination
@@ -448,44 +383,268 @@ export function EnterpriseTable<T>({
         labelRowsPerPage="Rows per page"
       />
 
-      <Menu anchorEl={columnsAnchor} open={Boolean(columnsAnchor)} onClose={() => setColumnsAnchor(null)}>
-        {columns.filter((column) => column.hideable !== false).map((column) => (
-          <MenuItem
-            key={column.id}
-            onClick={() => {
-              const next = new Set(hiddenColumns);
-              if (next.has(column.id)) next.delete(column.id);
-              else if (visibleColumns.length > 1) next.add(column.id);
-              setHiddenColumns(next);
-            }}
-          >
-            <Checkbox size="small" checked={!hiddenColumns.has(column.id)} />
-            <ListItemText>{column.label}</ListItemText>
-          </MenuItem>
-        ))}
-      </Menu>
+      <ColumnVisibilityMenu
+        anchor={columnsAnchor}
+        columns={columns}
+        hiddenColumns={hiddenColumns}
+        canHideMore={visibleColumns.length > 1}
+        onClose={() => setColumnsAnchor(null)}
+        onToggle={setHiddenColumns}
+      />
       <Menu anchorEl={exportAnchor} open={Boolean(exportAnchor)} onClose={() => setExportAnchor(null)}>
         <MenuItem onClick={() => void handleExport("CSV")}>CSV</MenuItem>
         <MenuItem onClick={() => void handleExport("Excel")}>Excel (.xlsx)</MenuItem>
         <MenuItem onClick={() => void handleExport("PDF")}>PDF</MenuItem>
       </Menu>
       <PrintDialog open={Boolean(printHtml)} html={printHtml} onClose={() => setPrintHtml("")} />
-      <Snackbar
-        open={Boolean(exportNotice)}
-        autoHideDuration={5000}
-        onClose={() => setExportNotice(null)}
-        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
-      >
-        <Alert
-          severity={exportNotice?.severity ?? "success"}
-          variant="filled"
-          onClose={() => setExportNotice(null)}
-          sx={{ width: "100%" }}
-        >
-          {exportNotice?.message}
-        </Alert>
-      </Snackbar>
+      <ExportNotice notice={exportNotice} onClose={() => setExportNotice(null)} />
     </Paper>
+  );
+}
+
+function TableEmptyState({
+  searching,
+  title,
+  description
+}: {
+  searching: boolean;
+  title: string;
+  description: string;
+}) {
+  return (
+    <Box sx={{ px: 3, py: 7, textAlign: "center" }}>
+      <Typography variant="h6">{searching ? "No matching records" : title}</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
+        {searching ? "Try a different search term or clear the search field." : description}
+      </Typography>
+    </Box>
+  );
+}
+
+function ExportNotice({
+  notice,
+  onClose
+}: {
+  notice: { message: string; severity: "success" | "error" } | null;
+  onClose: () => void;
+}) {
+  return (
+    <Snackbar
+      open={Boolean(notice)}
+      autoHideDuration={5000}
+      onClose={onClose}
+      anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+    >
+      <Alert
+        severity={notice?.severity ?? "success"}
+        variant="filled"
+        onClose={onClose}
+        sx={{ width: "100%" }}
+      >
+        {notice?.message}
+      </Alert>
+    </Snackbar>
+  );
+}
+
+function TableToolbar({
+  searchable,
+  search,
+  searchPlaceholder,
+  onSearchChange,
+  selectedCount,
+  toolbarExtras,
+  exporting,
+  exportDisabled,
+  onOpenColumns,
+  onOpenExport,
+  onPrint
+}: {
+  searchable: boolean;
+  search: string;
+  searchPlaceholder: string;
+  onSearchChange: (value: string) => void;
+  selectedCount: number;
+  toolbarExtras?: ReactNode;
+  exporting: "CSV" | "Excel" | "PDF" | null;
+  exportDisabled: boolean;
+  onOpenColumns: (anchor: HTMLElement) => void;
+  onOpenExport: (anchor: HTMLElement) => void;
+  onPrint: () => void;
+}) {
+  return (
+    <Stack
+      direction={{ xs: "column", md: "row" }}
+      alignItems={{ xs: "stretch", md: "center" }}
+      justifyContent="space-between"
+      gap={1.25}
+      sx={{ px: 1.5, py: 1.25, borderBottom: "1px solid", borderColor: "divider" }}
+      className="print-exclude"
+    >
+      <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0, flex: 1 }}>
+        {searchable ? (
+          <TextField
+            value={search}
+            onChange={(event) => onSearchChange(event.target.value)}
+            placeholder={searchPlaceholder}
+            aria-label={searchPlaceholder}
+            InputProps={{ startAdornment: <SearchIcon color="action" sx={{ mr: 1, fontSize: 20 }} /> }}
+            sx={{ width: { xs: "100%", md: 300 } }}
+          />
+        ) : null}
+        {selectedCount ? (
+          <Typography variant="body2" color="primary.main" fontWeight={700} whiteSpace="nowrap">
+            {selectedCount} selected
+          </Typography>
+        ) : null}
+        {toolbarExtras}
+      </Stack>
+      <Stack direction="row" spacing={0.5} justifyContent="flex-end" flexWrap="wrap">
+        <Tooltip title="Choose visible columns">
+          <Button
+            size="small"
+            startIcon={<ViewColumnOutlinedIcon />}
+            onClick={(event) => onOpenColumns(event.currentTarget)}
+          >
+            Columns
+          </Button>
+        </Tooltip>
+        <Button
+          size="small"
+          startIcon={exporting ? <CircularProgress size={16} /> : <DownloadOutlinedIcon />}
+          disabled={exportDisabled || Boolean(exporting)}
+          onClick={(event) => onOpenExport(event.currentTarget)}
+        >
+          {exporting ? `Exporting ${exporting}…` : "Export"}
+        </Button>
+        <Button
+          size="small"
+          startIcon={<PrintOutlinedIcon />}
+          disabled={exportDisabled}
+          onClick={onPrint}
+        >
+          Print
+        </Button>
+      </Stack>
+    </Stack>
+  );
+}
+
+function TableHeaderRow<T>({
+  title,
+  columns,
+  selectable,
+  allSelected,
+  someSelected,
+  onToggleAll,
+  sortColumn,
+  sortDirection,
+  onSort,
+  hasActions
+}: {
+  title: string;
+  columns: TableColumn<T>[];
+  selectable: boolean;
+  allSelected: boolean;
+  someSelected: boolean;
+  onToggleAll: () => void;
+  sortColumn: string;
+  sortDirection: "asc" | "desc";
+  onSort: (column: TableColumn<T>) => void;
+  hasActions: boolean;
+}) {
+  return (
+    <TableHead>
+      <TableRow>
+        {selectable ? (
+          <TableCell padding="checkbox" sx={{ width: 48 }}>
+            <Checkbox
+              size="small"
+              checked={allSelected}
+              indeterminate={someSelected}
+              onChange={onToggleAll}
+              inputProps={{ "aria-label": `Select visible ${title.toLowerCase()}` }}
+            />
+          </TableCell>
+        ) : null}
+        {columns.map((column) => (
+          <TableCell
+            key={column.id}
+            align={column.align}
+            sortDirection={sortColumn === column.id ? sortDirection : false}
+            sx={{ minWidth: column.minWidth, width: column.width }}
+          >
+            {column.sortable === false ? (
+              column.label
+            ) : (
+              <TableSortLabel
+                active={sortColumn === column.id}
+                direction={sortColumn === column.id ? sortDirection : "asc"}
+                onClick={() => onSort(column)}
+              >
+                {column.label}
+              </TableSortLabel>
+            )}
+          </TableCell>
+        ))}
+        {hasActions ? (
+          <TableCell
+            align="right"
+            className="print-exclude sticky-actions"
+            sx={{
+              position: "sticky",
+              right: 0,
+              zIndex: 5,
+              width: 76,
+              minWidth: 76,
+              bgcolor: "#f2f6f7",
+              boxShadow: "-8px 0 10px -10px rgba(22,32,42,0.65)"
+            }}
+          >
+            Actions
+          </TableCell>
+        ) : null}
+      </TableRow>
+    </TableHead>
+  );
+}
+
+function ColumnVisibilityMenu<T>({
+  anchor,
+  columns,
+  hiddenColumns,
+  canHideMore,
+  onClose,
+  onToggle
+}: {
+  anchor: HTMLElement | null;
+  columns: TableColumn<T>[];
+  hiddenColumns: Set<string>;
+  canHideMore: boolean;
+  onClose: () => void;
+  onToggle: (hidden: Set<string>) => void;
+}) {
+  return (
+    <Menu anchorEl={anchor} open={Boolean(anchor)} onClose={onClose}>
+      {columns.reduce<ReactNode[]>((items, column) => {
+        if (column.hideable === false) return items;
+        items.push(
+          <MenuItem
+            key={column.id}
+            onClick={() => {
+              const next = new Set(hiddenColumns);
+              if (next.has(column.id)) next.delete(column.id);
+              else if (canHideMore) next.add(column.id);
+              onToggle(next);
+            }}
+          >
+            <Checkbox size="small" checked={!hiddenColumns.has(column.id)} />
+            <ListItemText>{column.label}</ListItemText>
+          </MenuItem>
+        );
+        return items;
+      }, [])}
+    </Menu>
   );
 }
 
@@ -507,7 +666,7 @@ export function RowActionsMenu<T>({ row, actions }: { row: T; actions: RowAction
       </Tooltip>
       <Menu anchorEl={anchor} open={Boolean(anchor)} onClose={() => setAnchor(null)}>
         {validActions.map((action, index) => (
-          <Box key={`${action.label}-${index}`}>
+          <Box key={action.label}>
             {action.dividerBefore || (action.destructive && index > 0) ? <Divider /> : null}
             <MenuItem
               onClick={() => {

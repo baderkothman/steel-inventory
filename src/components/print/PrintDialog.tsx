@@ -59,6 +59,11 @@ export function PrintDialog({ open, html, onClose }: PrintDialogProps) {
             id={frameId}
             title="Print preview"
             srcDoc={html}
+            // The preview is app-generated markup with no scripts. `allow-same-origin`
+            // lets this window reach `contentWindow.print()`; `allow-modals` keeps the
+            // sandboxed-modals flag from turning that call into a no-op. Scripting stays
+            // disabled, so the frame cannot act on the same-origin grant.
+            sandbox="allow-same-origin allow-modals"
             style={{ border: 0, width: "100%", height: "100%" }}
           />
         </DialogContent>

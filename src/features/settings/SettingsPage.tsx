@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useReducer, useState } from "react";
 import {
   Alert,
   Button,
@@ -24,17 +24,71 @@ import { isCurrencyCode } from "../../lib/formatters";
 import { normalizeError } from "../../lib/tauri";
 import type { CompanySettings } from "../../types/common";
 
+// The "Clear All Data" wizard: step, credentials, confirmation text, and error
+// are written together by each step transition, so they move as one value.
+type ClearDataState = {
+  step: "credentials" | "confirm" | null;
+  adminEmail: string;
+  adminPassword: string;
+  confirmation: string;
+  error: string | null;
+};
+
+type ClearDataAction =
+  | { type: "started"; adminEmail: string }
+  | { type: "credentialsChanged"; changes: Partial<Pick<ClearDataState, "adminEmail" | "adminPassword">> }
+  | { type: "confirmationChanged"; value: string }
+  | { type: "confirmationRequested" }
+  | { type: "backToCredentials" }
+  | { type: "dismissed" }
+  | { type: "failed"; message: string }
+  | { type: "completed" };
+
+const idleClearData: ClearDataState = {
+  step: null,
+  adminEmail: "",
+  adminPassword: "",
+  confirmation: "",
+  error: null
+};
+
+function clearDataReducer(state: ClearDataState, action: ClearDataAction): ClearDataState {
+  switch (action.type) {
+    case "started":
+      // Always re-enter the wizard with a blank secret and confirmation.
+      return {
+        step: "credentials",
+        adminEmail: action.adminEmail,
+        adminPassword: "",
+        confirmation: "",
+        error: null
+      };
+    case "credentialsChanged":
+      return { ...state, ...action.changes };
+    case "confirmationChanged":
+      return { ...state, confirmation: action.value };
+    case "confirmationRequested":
+      return { ...state, step: "confirm", error: null };
+    case "backToCredentials":
+      // Stepping back keeps the current error visible, as before.
+      return { ...state, step: "credentials" };
+    case "dismissed":
+      return { ...state, step: null };
+    case "failed":
+      return { ...state, error: action.message };
+    case "completed":
+      return { ...state, step: null, adminPassword: "", confirmation: "", error: null };
+  }
+}
+
 export function SettingsPage() {
   const queryClient = useQueryClient();
   const { admin } = useAuth();
   const { data, isLoading } = useQuery({ queryKey: ["settings"], queryFn: settingsApi.get });
   const [form, setForm] = useState<CompanySettings | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [clearStep, setClearStep] = useState<"credentials" | "confirm" | null>(null);
-  const [adminEmail, setAdminEmail] = useState("");
-  const [adminPassword, setAdminPassword] = useState("");
-  const [confirmation, setConfirmation] = useState("");
-  const [clearError, setClearError] = useState<string | null>(null);
+  const [clearData, dispatchClearData] = useReducer(clearDataReducer, idleClearData);
+  const { step: clearStep, adminEmail, adminPassword, confirmation, error: clearError } = clearData;
   const [clearMessage, setClearMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -70,14 +124,11 @@ export function SettingsPage() {
       confirmation
     }),
     onSuccess: async (result) => {
-      setClearStep(null);
-      setAdminPassword("");
-      setConfirmation("");
-      setClearError(null);
+      dispatchClearData({ type: "completed" });
       setClearMessage(`${result.message} ${result.deleted_records} records were removed.`);
       await queryClient.invalidateQueries();
     },
-    onError: (err) => setClearError(normalizeError(err).message)
+    onError: (err) => dispatchClearData({ type: "failed", message: normalizeError(err).message })
   });
 
   function submit(event: FormEvent) {
@@ -135,13 +186,7 @@ export function SettingsPage() {
               color="error"
               variant="contained"
               sx={{ alignSelf: "flex-start" }}
-              onClick={() => {
-                setAdminEmail(admin.email);
-                setAdminPassword("");
-                setConfirmation("");
-                setClearError(null);
-                setClearStep("credentials");
-              }}
+              onClick={() => dispatchClearData({ type: "started", adminEmail: admin.email })}
             >
               Clear All Data
             </Button>
@@ -151,7 +196,7 @@ export function SettingsPage() {
 
       <Dialog
         open={clearStep === "credentials"}
-        onClose={() => !clearMutation.isPending && setClearStep(null)}
+        onClose={() => !clearMutation.isPending && dispatchClearData({ type: "dismissed" })}
         fullWidth
         maxWidth="sm"
       >
@@ -168,7 +213,10 @@ export function SettingsPage() {
               type="email"
               required
               value={adminEmail}
-              onChange={(event) => setAdminEmail(event.target.value)}
+              onChange={(event) => dispatchClearData({
+                type: "credentialsChanged",
+                changes: { adminEmail: event.target.value }
+              })}
             />
             <TextField
               label="Admin password"
@@ -176,20 +224,20 @@ export function SettingsPage() {
               required
               autoComplete="current-password"
               value={adminPassword}
-              onChange={(event) => setAdminPassword(event.target.value)}
+              onChange={(event) => dispatchClearData({
+                type: "credentialsChanged",
+                changes: { adminPassword: event.target.value }
+              })}
             />
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setClearStep(null)}>Cancel</Button>
+          <Button onClick={() => dispatchClearData({ type: "dismissed" })}>Cancel</Button>
           <Button
             color="error"
             variant="contained"
             disabled={!adminEmail.trim() || !adminPassword}
-            onClick={() => {
-              setClearError(null);
-              setClearStep("confirm");
-            }}
+            onClick={() => dispatchClearData({ type: "confirmationRequested" })}
           >
             Continue
           </Button>
@@ -198,7 +246,7 @@ export function SettingsPage() {
 
       <Dialog
         open={clearStep === "confirm"}
-        onClose={() => !clearMutation.isPending && setClearStep(null)}
+        onClose={() => !clearMutation.isPending && dispatchClearData({ type: "dismissed" })}
         fullWidth
         maxWidth="sm"
       >
@@ -216,13 +264,16 @@ export function SettingsPage() {
             <TextField
               label="Confirmation"
               value={confirmation}
-              onChange={(event) => setConfirmation(event.target.value)}
+              onChange={(event) => dispatchClearData({
+                type: "confirmationChanged",
+                value: event.target.value
+              })}
               autoFocus
             />
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button disabled={clearMutation.isPending} onClick={() => setClearStep("credentials")}>Back</Button>
+          <Button disabled={clearMutation.isPending} onClick={() => dispatchClearData({ type: "backToCredentials" })}>Back</Button>
           <Button
             color="error"
             variant="contained"

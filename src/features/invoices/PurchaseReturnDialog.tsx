@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useMemo, useReducer, useState } from "react";
 import {
   Alert,
   Box,
@@ -33,8 +33,10 @@ import { purchaseApi } from "../../lib/api";
 import { money, quantity, today } from "../../lib/formatters";
 import { normalizeError } from "../../lib/tauri";
 import type {
+  PurchaseReturnContext,
   PurchaseReturnDetail,
-  PurchaseReturnItemPayload
+  PurchaseReturnItemPayload,
+  PurchaseReturnableItem
 } from "../../types/invoice";
 
 type Props = {
@@ -43,14 +45,88 @@ type Props = {
   onClose: () => void;
 };
 
+// The return draft: every field below is written together by the reset and
+// edit transitions, so it is one state value rather than six.
+type ReturnDraft = {
+  returnDate: string;
+  reason: string;
+  notes: string;
+  quantities: Record<number, string>;
+  editingId: number | null;
+  idempotencyKey: string;
+};
+
+type ReturnDraftAction =
+  | { type: "detailsChanged"; changes: Partial<Pick<ReturnDraft, "returnDate" | "reason" | "notes">> }
+  | { type: "quantityChanged"; purchaseInvoiceItemId: number; value: string }
+  | { type: "editStarted"; detail: PurchaseReturnDetail }
+  | { type: "reset" };
+
+function createReturnDraft(): ReturnDraft {
+  return {
+    returnDate: today(),
+    reason: "",
+    notes: "",
+    quantities: {},
+    editingId: null,
+    idempotencyKey: newIdempotencyKey()
+  };
+}
+
+function returnDraftReducer(draft: ReturnDraft, action: ReturnDraftAction): ReturnDraft {
+  switch (action.type) {
+    case "detailsChanged":
+      return { ...draft, ...action.changes };
+    case "quantityChanged":
+      return {
+        ...draft,
+        quantities: {
+          ...draft.quantities,
+          [action.purchaseInvoiceItemId]: action.value
+        }
+      };
+    case "editStarted":
+      // Loading an existing return keeps the current idempotency key: it only
+      // guards the create call, which editing does not use.
+      return {
+        ...draft,
+        editingId: action.detail.return_record.id,
+        returnDate: action.detail.return_record.return_date,
+        reason: action.detail.return_record.reason ?? "",
+        notes: action.detail.return_record.notes ?? "",
+        quantities: Object.fromEntries(
+          action.detail.items.map((item) => [
+            item.purchase_invoice_item_id,
+            String(item.quantity)
+          ])
+        )
+      };
+    case "reset":
+      return createReturnDraft();
+  }
+}
+
 export function PurchaseReturnDialog({ invoiceId, currency, onClose }: Props) {
+  // The Dialog itself stays mounted so MUI can play its close transition, while the
+  // workspace is keyed by invoice: opening a different invoice (or reopening after a
+  // close) remounts it, which resets the form, the edit selection, and the
+  // idempotency key without an effect that syncs state to the prop.
+  return (
+    <Dialog open={invoiceId !== null} onClose={onClose} fullWidth maxWidth="lg">
+      <PurchaseReturnWorkspace
+        key={invoiceId}
+        invoiceId={invoiceId}
+        currency={currency}
+        onClose={onClose}
+      />
+    </Dialog>
+  );
+}
+
+function PurchaseReturnWorkspace({ invoiceId, currency, onClose }: Props) {
   const queryClient = useQueryClient();
-  const [returnDate, setReturnDate] = useState(today());
-  const [reason, setReason] = useState("");
-  const [notes, setNotes] = useState("");
-  const [quantities, setQuantities] = useState<Record<number, string>>({});
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [idempotencyKey, setIdempotencyKey] = useState(newIdempotencyKey);
+  const [draft, dispatch] = useReducer(returnDraftReducer, undefined, createReturnDraft);
+  const { returnDate, reason, notes, quantities, editingId, idempotencyKey } = draft;
   const [cancelId, setCancelId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [printHtml, setPrintHtml] = useState("");
@@ -64,12 +140,19 @@ export function PurchaseReturnDialog({ invoiceId, currency, onClose }: Props) {
     (item) => item.return_record.id === editingId
   ) ?? null;
   const selectedItems = useMemo(
-    () => Object.entries(quantities)
-      .map(([purchaseInvoiceItemId, value]) => ({
-        purchase_invoice_item_id: Number(purchaseInvoiceItemId),
-        quantity: Number(value)
-      }))
-      .filter((item) => Number.isFinite(item.quantity) && item.quantity > 0),
+    () => Object.entries(quantities).reduce<PurchaseReturnItemPayload[]>(
+      (items, [purchaseInvoiceItemId, value]) => {
+        const returnQuantity = Number(value);
+        if (Number.isFinite(returnQuantity) && returnQuantity > 0) {
+          items.push({
+            purchase_invoice_item_id: Number(purchaseInvoiceItemId),
+            quantity: returnQuantity
+          });
+        }
+        return items;
+      },
+      []
+    ),
     [quantities]
   );
   const merchandiseTotal = useMemo(
@@ -82,10 +165,6 @@ export function PurchaseReturnDialog({ invoiceId, currency, onClose }: Props) {
     }, 0),
     [context?.items, selectedItems]
   );
-
-  useEffect(() => {
-    resetForm();
-  }, [invoiceId]);
 
   const saveMutation = useMutation({
     mutationFn: (items: PurchaseReturnItemPayload[]) => {
@@ -130,25 +209,11 @@ export function PurchaseReturnDialog({ invoiceId, currency, onClose }: Props) {
   });
 
   function resetForm() {
-    setReturnDate(today());
-    setReason("");
-    setNotes("");
-    setQuantities({});
-    setEditingId(null);
-    setIdempotencyKey(newIdempotencyKey());
+    dispatch({ type: "reset" });
   }
 
   function startEdit(detail: PurchaseReturnDetail) {
-    setEditingId(detail.return_record.id);
-    setReturnDate(detail.return_record.return_date);
-    setReason(detail.return_record.reason ?? "");
-    setNotes(detail.return_record.notes ?? "");
-    setQuantities(Object.fromEntries(
-      detail.items.map((item) => [
-        item.purchase_invoice_item_id,
-        String(item.quantity)
-      ])
-    ));
+    dispatch({ type: "editStarted", detail });
     setError(null);
   }
 
@@ -179,240 +244,108 @@ export function PurchaseReturnDialog({ invoiceId, currency, onClose }: Props) {
     }
   }
 
-  function close() {
-    resetForm();
-    setError(null);
-    onClose();
-  }
-
   return (
     <>
-      <Dialog open={invoiceId !== null} onClose={close} fullWidth maxWidth="lg">
-        <DialogTitle>
-          Purchase returns — {context?.invoice.invoice_number ?? ""}
-        </DialogTitle>
-        <DialogContent>
-          {isLoading ? (
-            <LoadingState label="Loading returnable products" />
-          ) : (
-            <Stack spacing={2.5} sx={{ pt: 1 }}>
-              {error ? <Alert severity="error">{error}</Alert> : null}
+      <DialogTitle>
+        Purchase returns — {context?.invoice.invoice_number ?? ""}
+      </DialogTitle>
+      <DialogContent>
+        {isLoading ? (
+          <LoadingState label="Loading returnable products" />
+        ) : (
+          <Stack spacing={2.5} sx={{ pt: 1 }}>
+            {error ? <Alert severity="error">{error}</Alert> : null}
+            <InvoiceSummaryGrid invoice={context?.invoice} currency={currency} />
+
+            <Stack
+              component="form"
+              id="purchase-return-form"
+              onSubmit={submit}
+              spacing={2}
+            >
+              <Typography variant="subtitle1" fontWeight={700}>
+                {editingId ? "Edit purchase return" : "Create purchase return"}
+              </Typography>
               <Box
                 sx={{
                   display: "grid",
-                  gridTemplateColumns: { xs: "1fr", sm: "repeat(4, 1fr)" },
+                  gridTemplateColumns: { xs: "1fr", md: "180px 1fr 1fr" },
                   gap: 1.5
                 }}
               >
-                <Summary
-                  label="Original total"
-                  value={context?.invoice.total_cents ?? 0}
-                  currency={currency}
+                <TextField
+                  label="Return date"
+                  type="date"
+                  required
+                  value={returnDate}
+                  onChange={(event) => dispatch({
+                    type: "detailsChanged",
+                    changes: { returnDate: event.target.value }
+                  })}
                 />
-                <Summary
-                  label="Returned"
-                  value={context?.invoice.returned_cents ?? 0}
-                  currency={currency}
+                <TextField
+                  label="Reason"
+                  placeholder="Damaged goods"
+                  value={reason}
+                  onChange={(event) => dispatch({
+                    type: "detailsChanged",
+                    changes: { reason: event.target.value }
+                  })}
                 />
-                <Summary
-                  label="Net purchase"
-                  value={context?.invoice.net_total_cents ?? 0}
-                  currency={currency}
-                />
-                <Summary
-                  label="Invoice balance due"
-                  value={context?.invoice.remaining_cents ?? 0}
-                  currency={currency}
+                <TextField
+                  label="Notes"
+                  value={notes}
+                  onChange={(event) => dispatch({
+                    type: "detailsChanged",
+                    changes: { notes: event.target.value }
+                  })}
                 />
               </Box>
 
-              <Stack
-                component="form"
-                id="purchase-return-form"
-                onSubmit={submit}
-                spacing={2}
-              >
-                <Typography variant="subtitle1" fontWeight={700}>
-                  {editingId ? "Edit purchase return" : "Create purchase return"}
+              <ReturnableItemsTable
+                items={context?.items}
+                quantities={quantities}
+                currency={currency}
+                maximumFor={maximumFor}
+                onQuantityChange={(purchaseInvoiceItemId, value) => dispatch({
+                  type: "quantityChanged",
+                  purchaseInvoiceItemId,
+                  value
+                })}
+              />
+
+              <Stack direction="row" justifyContent="space-between" alignItems="center">
+                <Typography variant="body2" color="text.secondary">
+                  Merchandise subtotal: {money(merchandiseTotal, currency)}.
+                  Invoice discount, tax, and shipping credits are prorated by the server.
                 </Typography>
-                <Box
-                  sx={{
-                    display: "grid",
-                    gridTemplateColumns: { xs: "1fr", md: "180px 1fr 1fr" },
-                    gap: 1.5
-                  }}
-                >
-                  <TextField
-                    label="Return date"
-                    type="date"
-                    required
-                    value={returnDate}
-                    onChange={(event) => setReturnDate(event.target.value)}
-                  />
-                  <TextField
-                    label="Reason"
-                    placeholder="Damaged goods"
-                    value={reason}
-                    onChange={(event) => setReason(event.target.value)}
-                  />
-                  <TextField
-                    label="Notes"
-                    value={notes}
-                    onChange={(event) => setNotes(event.target.value)}
-                  />
-                </Box>
-
-                <TableContainer sx={{ maxHeight: 320, border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
-                  <Table size="small" stickyHeader aria-label="Returnable purchase products">
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Product</TableCell>
-                        <TableCell align="right">Purchased</TableCell>
-                        <TableCell align="right">Already returned</TableCell>
-                        <TableCell align="right">Returnable</TableCell>
-                        <TableCell align="right">Unit cost</TableCell>
-                        <TableCell align="right">Return quantity</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {context?.items.map((item) => {
-                        const maximum = maximumFor(
-                          item.purchase_invoice_item_id,
-                          item.returnable_quantity
-                        );
-                        return (
-                          <TableRow key={item.purchase_invoice_item_id}>
-                            <TableCell>{item.sku} — {item.product_name}</TableCell>
-                            <TableCell align="right">{quantity(item.purchased_quantity)}</TableCell>
-                            <TableCell align="right">{quantity(item.returned_quantity)}</TableCell>
-                            <TableCell align="right">{quantity(maximum)}</TableCell>
-                            <TableCell align="right">
-                              <MoneyText value={item.unit_cost_cents} currency={currency} />
-                            </TableCell>
-                            <TableCell align="right">
-                              <TextField
-                                type="number"
-                                value={quantities[item.purchase_invoice_item_id] ?? ""}
-                                onChange={(event) => setQuantities((current) => ({
-                                  ...current,
-                                  [item.purchase_invoice_item_id]: event.target.value
-                                }))}
-                                slotProps={{
-                                  htmlInput: {
-                                    min: 0,
-                                    max: maximum,
-                                    step: "any",
-                                    "aria-label": `Return quantity for ${item.product_name}`
-                                  }
-                                }}
-                                sx={{ width: 120 }}
-                              />
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-
-                <Stack direction="row" justifyContent="space-between" alignItems="center">
-                  <Typography variant="body2" color="text.secondary">
-                    Merchandise subtotal: {money(merchandiseTotal, currency)}.
-                    Invoice discount, tax, and shipping credits are prorated by the server.
-                  </Typography>
-                  <Stack direction="row" spacing={1}>
-                    {editingId ? <Button onClick={resetForm}>Stop editing</Button> : null}
-                    <Button
-                      type="submit"
-                      variant="contained"
-                      disabled={saveMutation.isPending || !selectedItems.length}
-                    >
-                      {editingId ? "Save return changes" : "Confirm return"}
-                    </Button>
-                  </Stack>
+                <Stack direction="row" spacing={1}>
+                  {editingId ? <Button onClick={resetForm}>Stop editing</Button> : null}
+                  <Button
+                    type="submit"
+                    variant="contained"
+                    disabled={saveMutation.isPending || !selectedItems.length}
+                  >
+                    {editingId ? "Save return changes" : "Confirm return"}
+                  </Button>
                 </Stack>
               </Stack>
-
-              <Stack spacing={1}>
-                <Typography variant="subtitle1" fontWeight={700}>
-                  Return history
-                </Typography>
-                <TableContainer sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
-                  <Table size="small" aria-label="Purchase return history">
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Return</TableCell>
-                        <TableCell>Date</TableCell>
-                        <TableCell>Reason</TableCell>
-                        <TableCell align="right">Quantity</TableCell>
-                        <TableCell align="right">Total credit</TableCell>
-                        <TableCell>Status</TableCell>
-                        <TableCell />
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {context?.returns.length ? context.returns.map((detail) => (
-                        <TableRow key={detail.return_record.id}>
-                          <TableCell>{detail.return_record.return_number}</TableCell>
-                          <TableCell>{detail.return_record.return_date}</TableCell>
-                          <TableCell>{detail.return_record.reason ?? "—"}</TableCell>
-                          <TableCell align="right">
-                            {quantity(detail.items.reduce((sum, item) => sum + item.quantity, 0))}
-                          </TableCell>
-                          <TableCell align="right">
-                            <MoneyText value={detail.return_record.total_cents} currency={currency} />
-                          </TableCell>
-                          <TableCell><StatusBadge value={detail.return_record.status} /></TableCell>
-                          <TableCell align="right">
-                            <RowActionsMenu
-                              row={detail}
-                              actions={[
-                                {
-                                  label: "Print return",
-                                  icon: <PrintOutlinedIcon fontSize="small" />,
-                                  onClick: () => void printReturn(detail.return_record.id)
-                                },
-                                ...(detail.return_record.status === "active"
-                                  ? [
-                                      {
-                                        label: "Edit return",
-                                        icon: <EditOutlinedIcon fontSize="small" />,
-                                        onClick: () => startEdit(detail)
-                                      },
-                                      {
-                                        label: "Cancel return",
-                                        icon: <DeleteOutlineIcon fontSize="small" />,
-                                        destructive: true,
-                                        onClick: () => setCancelId(detail.return_record.id)
-                                      }
-                                    ]
-                                  : [
-                                      {
-                                        label: "Restore return",
-                                        icon: <RestoreOutlinedIcon fontSize="small" />,
-                                        onClick: () => restoreMutation.mutate(detail.return_record.id)
-                                      }
-                                    ])
-                              ]}
-                            />
-                          </TableCell>
-                        </TableRow>
-                      )) : (
-                        <TableRow>
-                          <TableCell colSpan={7}>No purchase returns have been recorded.</TableCell>
-                        </TableRow>
-                      )}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              </Stack>
             </Stack>
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={close}>Close</Button>
-        </DialogActions>
-      </Dialog>
+
+            <ReturnHistoryTable
+              returns={context?.returns}
+              currency={currency}
+              onPrint={(id) => void printReturn(id)}
+              onEdit={startEdit}
+              onCancel={setCancelId}
+              onRestore={(id) => restoreMutation.mutate(id)}
+            />
+          </Stack>
+        )}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Close</Button>
+      </DialogActions>
 
       <ConfirmDialog
         open={cancelId !== null}
@@ -430,6 +363,194 @@ export function PurchaseReturnDialog({ invoiceId, currency, onClose }: Props) {
         onClose={() => setPrintHtml("")}
       />
     </>
+  );
+}
+
+function InvoiceSummaryGrid({
+  invoice,
+  currency
+}: {
+  invoice: PurchaseReturnContext["invoice"] | undefined;
+  currency?: string;
+}) {
+  return (
+    <Box
+      sx={{
+        display: "grid",
+        gridTemplateColumns: { xs: "1fr", sm: "repeat(4, 1fr)" },
+        gap: 1.5
+      }}
+    >
+      <Summary label="Original total" value={invoice?.total_cents ?? 0} currency={currency} />
+      <Summary label="Returned" value={invoice?.returned_cents ?? 0} currency={currency} />
+      <Summary label="Net purchase" value={invoice?.net_total_cents ?? 0} currency={currency} />
+      <Summary
+        label="Invoice balance due"
+        value={invoice?.remaining_cents ?? 0}
+        currency={currency}
+      />
+    </Box>
+  );
+}
+
+function ReturnableItemsTable({
+  items,
+  quantities,
+  currency,
+  maximumFor,
+  onQuantityChange
+}: {
+  items: PurchaseReturnableItem[] | undefined;
+  quantities: Record<number, string>;
+  currency?: string;
+  maximumFor: (purchaseInvoiceItemId: number, returnableQuantity: number) => number;
+  onQuantityChange: (purchaseInvoiceItemId: number, value: string) => void;
+}) {
+  return (
+    <TableContainer sx={{ maxHeight: 320, border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
+      <Table size="small" stickyHeader aria-label="Returnable purchase products">
+        <TableHead>
+          <TableRow>
+            <TableCell>Product</TableCell>
+            <TableCell align="right">Purchased</TableCell>
+            <TableCell align="right">Already returned</TableCell>
+            <TableCell align="right">Returnable</TableCell>
+            <TableCell align="right">Unit cost</TableCell>
+            <TableCell align="right">Return quantity</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {items?.map((item) => {
+            const maximum = maximumFor(
+              item.purchase_invoice_item_id,
+              item.returnable_quantity
+            );
+            return (
+              <TableRow key={item.purchase_invoice_item_id}>
+                <TableCell>{item.sku} — {item.product_name}</TableCell>
+                <TableCell align="right">{quantity(item.purchased_quantity)}</TableCell>
+                <TableCell align="right">{quantity(item.returned_quantity)}</TableCell>
+                <TableCell align="right">{quantity(maximum)}</TableCell>
+                <TableCell align="right">
+                  <MoneyText value={item.unit_cost_cents} currency={currency} />
+                </TableCell>
+                <TableCell align="right">
+                  <TextField
+                    type="number"
+                    value={quantities[item.purchase_invoice_item_id] ?? ""}
+                    onChange={(event) => onQuantityChange(
+                      item.purchase_invoice_item_id,
+                      event.target.value
+                    )}
+                    slotProps={{
+                      htmlInput: {
+                        min: 0,
+                        max: maximum,
+                        step: "any",
+                        "aria-label": `Return quantity for ${item.product_name}`
+                      }
+                    }}
+                    sx={{ width: 120 }}
+                  />
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    </TableContainer>
+  );
+}
+
+function ReturnHistoryTable({
+  returns,
+  currency,
+  onPrint,
+  onEdit,
+  onCancel,
+  onRestore
+}: {
+  returns: PurchaseReturnDetail[] | undefined;
+  currency?: string;
+  onPrint: (id: number) => void;
+  onEdit: (detail: PurchaseReturnDetail) => void;
+  onCancel: (id: number) => void;
+  onRestore: (id: number) => void;
+}) {
+  return (
+    <Stack spacing={1}>
+      <Typography variant="subtitle1" fontWeight={700}>
+        Return history
+      </Typography>
+      <TableContainer sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
+        <Table size="small" aria-label="Purchase return history">
+          <TableHead>
+            <TableRow>
+              <TableCell>Return</TableCell>
+              <TableCell>Date</TableCell>
+              <TableCell>Reason</TableCell>
+              <TableCell align="right">Quantity</TableCell>
+              <TableCell align="right">Total credit</TableCell>
+              <TableCell>Status</TableCell>
+              <TableCell />
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {returns?.length ? returns.map((detail) => (
+              <TableRow key={detail.return_record.id}>
+                <TableCell>{detail.return_record.return_number}</TableCell>
+                <TableCell>{detail.return_record.return_date}</TableCell>
+                <TableCell>{detail.return_record.reason ?? "—"}</TableCell>
+                <TableCell align="right">
+                  {quantity(detail.items.reduce((sum, item) => sum + item.quantity, 0))}
+                </TableCell>
+                <TableCell align="right">
+                  <MoneyText value={detail.return_record.total_cents} currency={currency} />
+                </TableCell>
+                <TableCell><StatusBadge value={detail.return_record.status} /></TableCell>
+                <TableCell align="right">
+                  <RowActionsMenu
+                    row={detail}
+                    actions={[
+                      {
+                        label: "Print return",
+                        icon: <PrintOutlinedIcon fontSize="small" />,
+                        onClick: () => onPrint(detail.return_record.id)
+                      },
+                      ...(detail.return_record.status === "active"
+                        ? [
+                            {
+                              label: "Edit return",
+                              icon: <EditOutlinedIcon fontSize="small" />,
+                              onClick: () => onEdit(detail)
+                            },
+                            {
+                              label: "Cancel return",
+                              icon: <DeleteOutlineIcon fontSize="small" />,
+                              destructive: true,
+                              onClick: () => onCancel(detail.return_record.id)
+                            }
+                          ]
+                        : [
+                            {
+                              label: "Restore return",
+                              icon: <RestoreOutlinedIcon fontSize="small" />,
+                              onClick: () => onRestore(detail.return_record.id)
+                            }
+                          ])
+                    ]}
+                  />
+                </TableCell>
+              </TableRow>
+            )) : (
+              <TableRow>
+                <TableCell colSpan={7}>No purchase returns have been recorded.</TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </TableContainer>
+    </Stack>
   );
 }
 

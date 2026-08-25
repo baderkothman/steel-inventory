@@ -56,6 +56,9 @@ import { PurchaseReturnDialog } from "./PurchaseReturnDialog";
 
 type Kind = "purchase" | "sales";
 type InvoiceItemForm = {
+  // Stable per-line identity: the same product can be added twice and lines are
+  // removable, so neither product_id nor the row position identifies a line.
+  line_id: string;
   product_id: number;
   quantity: string;
   unit_price: string;
@@ -279,7 +282,7 @@ function InstallmentPaymentDialog({
   const queryClient = useQueryClient();
   const [amount, setAmount] = useState("0.00");
   const [paymentMethod, setPaymentMethod] = useState("cash");
-  const [paymentDate, setPaymentDate] = useState(today());
+  const [paymentDate, setPaymentDate] = useState(() => today());
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
   const { data: payments = [], isLoading } = useQuery({
@@ -440,6 +443,7 @@ function InvoiceDialog({
       items: [
         ...form.items,
         {
+          line_id: newLineId(),
           product_id: product.id,
           quantity: "1",
           unit_price: fromCents(kind === "purchase" ? product.cost_price_cents : product.selling_price_cents)
@@ -475,7 +479,7 @@ function InvoiceDialog({
                   const product = products.find((candidate) => candidate.id === item.product_id);
                   const rowTotal = Number(item.quantity || 0) * Number(item.unit_price || 0);
                   return (
-                    <TableRow key={`${item.product_id}-${index}`}>
+                    <TableRow key={item.line_id}>
                       <TableCell>{product?.supplier_name}</TableCell>
                       <TableCell>{product?.sku} - {product?.name}</TableCell>
                       <TableCell align="right">{kind === "sales" ? quantity(product?.current_quantity) : "-"}</TableCell>
@@ -538,6 +542,11 @@ function InvoiceDialog({
       </DialogActions>
     </Dialog>
   );
+}
+
+function newLineId() {
+  return globalThis.crypto?.randomUUID?.()
+    ?? `invoice-line-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function calculateTotals(form: InvoiceForm | null) {
