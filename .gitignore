@@ -92,6 +92,7 @@ temp/
 exports/
 reports/generated/
 invoices/generated/
+graphify-out/
 
 # Local app data
 

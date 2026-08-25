@@ -1,99 +1,72 @@
-# Steel Inventory Desktop System
+# Steel Inventory
 
-Offline-first macOS desktop application for steel inventory, supplier purchases, sales invoices, expenses, customer/supplier payments, reports, invoice printing, local backup/restore, and in-app updates.
+Steel Inventory is an offline-first desktop application for running a small steel inventory business. It manages supplier-specific products, purchases, purchase returns, sales, expenses, payments, stock movement, statements, reports, printing, and local backups from one SQLite database.
 
-## Tech Stack
+Current application version: `1.0.11`.
 
-- Tauri 2 desktop shell
-- React + TypeScript frontend
-- MUI UI components
-- Rust Tauri command backend
-- SQLite via `rusqlite` with bundled SQLite
-- Local app-data database with migrations
+## What it does
 
-## Run in Development
+- Tracks steel dimensions, SKUs, locations, prices, minimum stock, and supplier-specific variants.
+- Posts purchases and sales to an inventory ledger and maintains a current-stock cache.
+- Supports partial invoice and expense payments, customer/supplier statements, and debt reports.
+- Handles partial or full purchase returns with revision history and reversible accounting effects.
+- Produces operational, profit, stock, debt, supplier-settlement, and inventory-value reports.
+- Prints invoices, purchase returns, dashboards, tables, and physical stock-count sheets.
+- Stores all business data locally, creates automatic/manual backups, and restores SQLite backups.
+- Uses a single local administrator account with an eight-hour in-memory session.
+
+## Technology
+
+- Tauri 2 and Rust for the desktop shell and business layer
+- React 19, TypeScript, Material UI, and TanStack Query for the frontend
+- SQLite through bundled `rusqlite`
+- Vite for frontend development and builds
+- GitHub Actions for universal macOS releases and signed updater artifacts
+
+## Quick start
+
+Install the Tauri v2 system prerequisites, Node.js, npm, and Rust 1.80 or newer. Then run:
 
 ```bash
-npm install
+npm ci
 npm run tauri:dev
 ```
 
-On first launch, create the single local admin account. Later launches require that admin login before business data is accessible.
+The first launch asks you to create the one local administrator. Later launches require that account to sign in.
 
-## Build
+Useful checks:
+
+```bash
+npm run build
+cargo check --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml
+```
+
+Build a desktop bundle with:
 
 ```bash
 npm run tauri:build
 ```
 
-Build outputs:
+## Documentation
 
-- `src-tauri/target/release/bundle/macos/Steel Inventory.app`
-- `src-tauri/target/release/bundle/dmg/Steel Inventory_<version>_<architecture>.dmg`
+- [User guide](docs/USER_GUIDE.md) — first-run setup and day-to-day workflows
+- [Architecture](docs/ARCHITECTURE.md) — layers, request flow, security, and design rules
+- [Data model](docs/DATA_MODEL.md) — tables, migrations, accounting, inventory, and lifecycle rules
+- [Command reference](docs/COMMANDS.md) — the frontend API and registered Tauri command surface
+- [Development](docs/DEVELOPMENT.md) — repository layout, local workflow, testing, and releases
+- [Operations](docs/OPERATIONS.md) — installation, updates, database location, backup, and recovery
+- [Changelog](CHANGELOG.md) — consolidated release history
 
-## Verification
+## Core invariants
 
-```bash
-npm run build
-cd src-tauri
-cargo check
-cargo test
-```
+- Monetary values cross the backend boundary and persist as integer cents.
+- Business mutations that affect more than one ledger are transactional.
+- `inventory_transactions` is the stock history; `stock_levels` is a recalculated read cache.
+- Completed sales snapshot cost and profit, so later product-price changes do not rewrite history.
+- Cancelled operational records remain available for audit but are excluded from live calculations.
+- Database migrations are append-only, ordered, and recorded in `schema_migrations`.
 
-The current implementation passes frontend build, Rust check, Rust tests, Tauri production build, and a release executable smoke launch.
+## Distribution status
 
-## Database
-
-The SQLite database is created in the local app-data directory for `SteelInventory`. Migrations run on startup and create the required tables, indexes, settings seed row, default expense categories, and suggested steel category tree.
-
-Money values are stored as integer cents. Stock movements are recorded in `inventory_transactions`, with `stock_levels` maintained for fast current stock reads.
-
-## Implementation Notes
-
-- Invoice paid amounts are recorded as payment rows, while debt reports/statements use the statement-consistent formula: opening balance + active invoice totals - payments.
-- Sales invoice items store cost, price, total cost, total price, and profit snapshots.
-- Cancelled invoices reverse stock movement and remove linked invoice-created payments.
-- The settings table includes `default_tax_rate` and `default_profit_method` because FR-018 requires them, although the SDS table omitted those columns.
-
-## Supplier-Specific Features
-
-Products can be tracked per supplier (the same specification from multiple companies coexists
-as priced/stocked variants), compared by cheapest price, settled as daily/weekly supplier
-payables based on actual completed sales, and printed as a physical stock count sheet. See
-[SUPPLIER_FEATURES.md](SUPPLIER_FEATURES.md) for the full workflow and
-[SUPPLIER_FEATURES_AUDIT.md](SUPPLIER_FEATURES_AUDIT.md) for the implementation audit
-(what existed, what was missing, what changed). Database changes live in migration
-`src-tauri/src/db/migrations/003_supplier_product_variants.sql`.
-
-## macOS Releases and Automatic Updates
-
-The GitHub Actions workflow publishes one universal macOS build that runs on Apple Silicon and Intel Macs. It intentionally does not build or publish Windows assets.
-
-The updater private key is stored locally at `~/.tauri/steel-inventory.key`. Keep an encrypted backup outside this repository. Never commit or share it. Its public key is embedded in `src-tauri/tauri.conf.json`.
-
-Configure the required GitHub repository secret once:
-
-```bash
-gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/steel-inventory.key
-```
-
-To publish version `1.0.6`, make sure `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` all contain `1.0.6`, then commit and push the code:
-
-```bash
-git add .github/workflows/release-desktop.yml README.md RELEASE_NOTES_v1.0.6.md package.json package-lock.json \
-  src src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/capabilities \
-  src-tauri/gen/schemas src-tauri/src src-tauri/tauri.conf.json
-git commit -m "release: v1.0.6"
-git push origin master
-git tag v1.0.6
-git push origin v1.0.6
-```
-
-Pushing the tag runs `.github/workflows/release-desktop.yml`. The workflow creates a public GitHub Release containing the universal DMG, signed updater archive, signature, and `latest.json`.
-Use `RELEASE_NOTES_v1.0.6.md` as the GitHub Release description after the workflow finishes.
-
-Builds are ad-hoc signed because no Apple Developer identity is currently configured. Users may need to approve the first installation in macOS Privacy & Security. For frictionless public distribution, configure a paid Apple Developer ID certificate and notarization credentials.
-
-For the first updater-enabled version, open the downloaded DMG, drag **Steel Inventory** onto **Applications**, eject the DMG, and launch the app from Applications. Do not run the app directly from the DMG: macOS mounts DMGs read-only, so an app running there cannot replace itself during an update.
-
-Every later version is detected on app startup and can be installed with **Install and restart**, without downloading the repository or another DMG manually. The app detects read-only DMG and App Translocation launches before downloading an update and explains how to move the installation. The database remains in the user's app-data directory when the application bundle is moved.
+The committed release workflow publishes a universal macOS application for Apple Silicon and Intel Macs. Windows and Linux source compatibility is not the same as a tested release channel; the current workflow does not publish installers for them.
