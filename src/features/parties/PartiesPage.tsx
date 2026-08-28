@@ -1,6 +1,7 @@
 import { FormEvent, useMemo, useState } from "react";
 import {
   Alert,
+  Avatar,
   Box,
   Button,
   Dialog,
@@ -8,13 +9,16 @@ import {
   DialogContent,
   DialogTitle,
   Drawer,
+  Paper,
   Stack,
-  TextField
+  TextField,
+  Typography
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
 import ReceiptLongIcon from "@mui/icons-material/ReceiptLong";
+import ImageOutlinedIcon from "@mui/icons-material/ImageOutlined";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { MoneyText } from "../../components/MoneyText";
@@ -25,6 +29,7 @@ import { EnterpriseTable, type TableColumn } from "../../components/table/Enterp
 import { customerApi, settingsApi, supplierApi } from "../../lib/api";
 import { fromCents, money, toCents } from "../../lib/formatters";
 import { normalizeError } from "../../lib/tauri";
+import { LOGO_ACCEPT, readLogoFile } from "../../lib/imageFiles";
 import type { Party, PartyPayload, StatementRow } from "../../types/party";
 
 type Kind = "supplier" | "customer";
@@ -144,6 +149,11 @@ function PartiesPage({ kind }: { kind: Kind }) {
             <TextField label="Tax number" value={form?.tax_number ?? ""} onChange={(e) => setForm((current) => current && { ...current, tax_number: e.target.value })} />
             <TextField label="Opening balance" value={form?.opening_balance ?? "0.00"} onChange={(e) => setForm((current) => current && { ...current, opening_balance: e.target.value })} />
             <TextField label="Notes" multiline minRows={2} value={form?.notes ?? ""} onChange={(e) => setForm((current) => current && { ...current, notes: e.target.value })} />
+            {kind === "supplier" ? (
+              form?.id
+                ? <SupplierLogoEditor supplierId={form.id} />
+                : <Alert severity="info">Save the supplier first, then edit it to upload a company logo.</Alert>
+            ) : null}
           </Stack>
         </DialogContent>
         <DialogActions>
@@ -167,6 +177,74 @@ function PartiesPage({ kind }: { kind: Kind }) {
         onConfirm={() => deleteId !== null && deleteMutation.mutate(deleteId)}
       />
     </Stack>
+  );
+}
+
+function SupplierLogoEditor({ supplierId }: { supplierId: number }) {
+  const queryClient = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const [broken, setBroken] = useState(false);
+  const { data: logo, isLoading } = useQuery({
+    queryKey: ["supplier", supplierId, "logo"],
+    queryFn: () => supplierApi.getLogo(supplierId)
+  });
+  const uploadMutation = useMutation({
+    mutationFn: async (file: File) => supplierApi.saveLogo(supplierId, await readLogoFile(file)),
+    onSuccess: async () => {
+      setError(null);
+      setBroken(false);
+      await queryClient.invalidateQueries({ queryKey: ["supplier"] });
+    },
+    onError: (reason) => setError(normalizeError(reason).message)
+  });
+  const removeMutation = useMutation({
+    mutationFn: () => supplierApi.removeLogo(supplierId),
+    onSuccess: async () => {
+      setError(null);
+      setBroken(false);
+      await queryClient.invalidateQueries({ queryKey: ["supplier"] });
+    },
+    onError: (reason) => setError(normalizeError(reason).message)
+  });
+
+  return (
+    <Paper variant="outlined" sx={{ p: 2 }}>
+      <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems={{ sm: "center" }}>
+        <Avatar
+          variant="rounded"
+          src={!broken ? logo ?? undefined : undefined}
+          imgProps={{ onError: () => setBroken(true), style: { objectFit: "contain" } }}
+          sx={{ width: 94, height: 94, bgcolor: "#eef3f4", color: "primary.main" }}
+        >
+          <ImageOutlinedIcon />
+        </Avatar>
+        <Stack spacing={1} sx={{ flex: 1 }}>
+          <Box>
+            <Typography variant="subtitle2">Supplier company logo</Typography>
+            <Typography variant="caption" color="text.secondary">
+              PNG, JPEG, or WebP up to 2 MB. The logo is fitted without stretching on purchasing printouts.
+            </Typography>
+          </Box>
+          {error ? <Alert severity="error">{error}</Alert> : null}
+          <Stack direction="row" spacing={1}>
+            <Button component="label" variant="outlined" disabled={isLoading || uploadMutation.isPending}>
+              {logo ? "Change logo" : "Upload logo"}
+              <input
+                hidden
+                type="file"
+                accept={LOGO_ACCEPT}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  if (file) uploadMutation.mutate(file);
+                }}
+              />
+            </Button>
+            {logo ? <Button color="error" onClick={() => removeMutation.mutate()} disabled={removeMutation.isPending}>Remove</Button> : null}
+          </Stack>
+        </Stack>
+      </Stack>
+    </Paper>
   );
 }
 

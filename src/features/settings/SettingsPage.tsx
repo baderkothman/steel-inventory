@@ -1,6 +1,8 @@
 import { FormEvent, useEffect, useReducer, useState } from "react";
 import {
   Alert,
+  Avatar,
+  Box,
   Button,
   Dialog,
   DialogActions,
@@ -15,6 +17,7 @@ import {
   Typography
 } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import ImageOutlinedIcon from "@mui/icons-material/ImageOutlined";
 
 import { PageHeader } from "../../components/PageHeader";
 import { LoadingState } from "../../components/feedback/PageState";
@@ -22,6 +25,7 @@ import { useAuth } from "../auth/AuthContext";
 import { settingsApi } from "../../lib/api";
 import { isCurrencyCode } from "../../lib/formatters";
 import { normalizeError } from "../../lib/tauri";
+import { LOGO_ACCEPT, readLogoFile } from "../../lib/imageFiles";
 import type { CompanySettings } from "../../types/common";
 
 // The "Clear All Data" wizard: step, credentials, confirmation text, and error
@@ -105,6 +109,7 @@ export function SettingsPage() {
       default_currency: value.default_currency,
       invoice_prefix_sales: value.invoice_prefix_sales,
       invoice_prefix_purchase: value.invoice_prefix_purchase,
+      quotation_prefix: value.quotation_prefix,
       allow_negative_stock: value.allow_negative_stock,
       backup_path: value.backup_path,
       default_tax_rate: value.default_tax_rate,
@@ -150,6 +155,7 @@ export function SettingsPage() {
         <Stack spacing={2}>
           {error ? <Alert severity="error">{error}</Alert> : null}
           <TextField label="Company name" required value={form.company_name} onChange={(e) => setForm({ ...form, company_name: e.target.value })} />
+          <CompanyLogoEditor />
           <TextField label="Phone" value={form.phone ?? ""} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
           <TextField label="Email" value={form.email ?? ""} onChange={(e) => setForm({ ...form, email: e.target.value })} />
           <TextField label="Address" multiline minRows={2} value={form.address ?? ""} onChange={(e) => setForm({ ...form, address: e.target.value })} />
@@ -164,6 +170,7 @@ export function SettingsPage() {
           />
           <TextField label="Sales invoice prefix" value={form.invoice_prefix_sales} onChange={(e) => setForm({ ...form, invoice_prefix_sales: e.target.value.toUpperCase() })} />
           <TextField label="Purchase invoice prefix" value={form.invoice_prefix_purchase} onChange={(e) => setForm({ ...form, invoice_prefix_purchase: e.target.value.toUpperCase() })} />
+          <TextField label="Quotation prefix" value={form.quotation_prefix} onChange={(e) => setForm({ ...form, quotation_prefix: e.target.value.toUpperCase() })} />
           <TextField label="Default tax value" type="number" value={form.default_tax_rate} onChange={(e) => setForm({ ...form, default_tax_rate: Number(e.target.value) })} />
           <TextField label="Profit calculation method" value={form.default_profit_method} onChange={(e) => setForm({ ...form, default_profit_method: e.target.value })} />
           <TextField label="Backup path" value={form.backup_path ?? ""} onChange={(e) => setForm({ ...form, backup_path: e.target.value })} />
@@ -285,5 +292,71 @@ export function SettingsPage() {
         </DialogActions>
       </Dialog>
     </Stack>
+  );
+}
+
+function CompanyLogoEditor() {
+  const queryClient = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const [broken, setBroken] = useState(false);
+  const { data: logo, isLoading } = useQuery({
+    queryKey: ["settings", "company-logo"],
+    queryFn: settingsApi.getLogo
+  });
+  const uploadMutation = useMutation({
+    mutationFn: async (file: File) => settingsApi.saveLogo(await readLogoFile(file)),
+    onSuccess: async () => {
+      setError(null);
+      setBroken(false);
+      await queryClient.invalidateQueries({ queryKey: ["settings"] });
+    },
+    onError: (reason) => setError(normalizeError(reason).message)
+  });
+  const removeMutation = useMutation({
+    mutationFn: settingsApi.removeLogo,
+    onSuccess: async () => {
+      setError(null);
+      setBroken(false);
+      await queryClient.invalidateQueries({ queryKey: ["settings"] });
+    },
+    onError: (reason) => setError(normalizeError(reason).message)
+  });
+
+  return (
+    <Paper variant="outlined" sx={{ p: 2 }}>
+      <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems={{ sm: "center" }}>
+        <Avatar
+          variant="rounded"
+          src={!broken ? logo ?? undefined : undefined}
+          imgProps={{ onError: () => setBroken(true), style: { objectFit: "contain" } }}
+          sx={{ width: 94, height: 94, bgcolor: "#eef3f4", color: "primary.main" }}
+        >
+          <ImageOutlinedIcon />
+        </Avatar>
+        <Box sx={{ flex: 1 }}>
+          <Typography variant="subtitle2">Company logo</Typography>
+          <Typography variant="caption" color="text.secondary">
+            Used on professional quotation printouts. PNG, JPEG, or WebP up to 2 MB.
+          </Typography>
+          {error ? <Alert severity="error" sx={{ mt: 1 }}>{error}</Alert> : null}
+          <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+            <Button component="label" variant="outlined" disabled={isLoading || uploadMutation.isPending}>
+              {logo ? "Change logo" : "Upload logo"}
+              <input
+                hidden
+                type="file"
+                accept={LOGO_ACCEPT}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  if (file) uploadMutation.mutate(file);
+                }}
+              />
+            </Button>
+            {logo ? <Button color="error" disabled={removeMutation.isPending} onClick={() => removeMutation.mutate()}>Remove</Button> : null}
+          </Stack>
+        </Box>
+      </Stack>
+    </Paper>
   );
 }

@@ -1,11 +1,76 @@
+use rusqlite::params;
 use tauri::State;
 
 use crate::{
-    models::{DateRangeFilters, PartyFilters, PartyPayload, PartyRow, StatementRow},
-    services::party_service::{self, PartyKind},
+    models::{
+        DateRangeFilters, LogoUploadPayload, PartyFilters, PartyPayload, PartyRow, StatementRow,
+    },
+    services::{
+        logo_service,
+        party_service::{self, PartyKind},
+    },
     state::AppState,
     utils::errors::AppError,
 };
+
+#[tauri::command]
+pub fn save_supplier_logo(
+    state: State<'_, AppState>,
+    id: i64,
+    payload: LogoUploadPayload,
+) -> Result<PartyRow, AppError> {
+    let user_id = state.require_user_id()?;
+    let conn = state.open_conn()?;
+    let supplier = party_service::get_party(&conn, PartyKind::Supplier, id)?;
+    let path = logo_service::save_logo(state.db_path(), "suppliers", &id.to_string(), &payload)?;
+    conn.execute(
+        "UPDATE suppliers SET logo_path = ?1, updated_at = ?2 WHERE id = ?3",
+        params![path, crate::utils::dates::now_iso(), id],
+    )?;
+    crate::utils::audit::insert_audit_log(
+        &conn,
+        user_id,
+        "update_logo",
+        "suppliers",
+        id,
+        supplier.logo_path.map(serde_json::Value::String),
+        Some(serde_json::Value::String(path)),
+    )?;
+    party_service::get_party(&conn, PartyKind::Supplier, id)
+}
+
+#[tauri::command]
+pub fn get_supplier_logo(state: State<'_, AppState>, id: i64) -> Result<Option<String>, AppError> {
+    state.require_user_id()?;
+    let conn = state.open_conn()?;
+    let supplier = party_service::get_party(&conn, PartyKind::Supplier, id)?;
+    Ok(logo_service::logo_data_uri(
+        state.db_path(),
+        supplier.logo_path.as_deref(),
+    ))
+}
+
+#[tauri::command]
+pub fn remove_supplier_logo(state: State<'_, AppState>, id: i64) -> Result<PartyRow, AppError> {
+    let user_id = state.require_user_id()?;
+    let conn = state.open_conn()?;
+    let supplier = party_service::get_party(&conn, PartyKind::Supplier, id)?;
+    logo_service::remove_logo(state.db_path(), supplier.logo_path.as_deref())?;
+    conn.execute(
+        "UPDATE suppliers SET logo_path = NULL, updated_at = ?1 WHERE id = ?2",
+        params![crate::utils::dates::now_iso(), id],
+    )?;
+    crate::utils::audit::insert_audit_log(
+        &conn,
+        user_id,
+        "remove_logo",
+        "suppliers",
+        id,
+        None,
+        None,
+    )?;
+    party_service::get_party(&conn, PartyKind::Supplier, id)
+}
 
 #[tauri::command]
 pub fn create_supplier(

@@ -31,6 +31,13 @@ impl PartyKind {
         }
     }
 
+    fn logo_select(self) -> &'static str {
+        match self {
+            PartyKind::Supplier => "logo_path",
+            PartyKind::Customer => "NULL AS logo_path",
+        }
+    }
+
     fn invoice_party_column(self) -> &'static str {
         match self {
             PartyKind::Supplier => "supplier_id",
@@ -114,7 +121,7 @@ pub fn list_parties(
         .filter(|value| !value.is_empty());
     let active_only = filters.active_only.unwrap_or(false);
     let sql = format!(
-        "SELECT id, name, company_name, phone, email, address, tax_number,
+        "SELECT id, name, company_name, phone, email, address, tax_number, {},
                 opening_balance_cents, notes, is_active, created_at, updated_at, deleted_at
          FROM {}
          WHERE (?1 IS NULL OR (
@@ -125,6 +132,7 @@ pub fn list_parties(
          ))
            AND (?2 = 0 OR is_active = 1)
          ORDER BY name",
+        kind.logo_select(),
         kind.table()
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -146,10 +154,11 @@ pub fn list_parties(
 
 pub fn get_party(conn: &Connection, kind: PartyKind, id: i64) -> Result<PartyRow, AppError> {
     let sql = format!(
-        "SELECT id, name, company_name, phone, email, address, tax_number,
+        "SELECT id, name, company_name, phone, email, address, tax_number, {},
                 opening_balance_cents, notes, is_active, created_at, updated_at, deleted_at
          FROM {}
          WHERE id = ?1",
+        kind.logo_select(),
         kind.table()
     );
     let mut party =
@@ -614,12 +623,13 @@ fn base_party_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PartyRow> {
         email: row.get(4)?,
         address: row.get(5)?,
         tax_number: row.get(6)?,
-        opening_balance_cents: row.get(7)?,
-        notes: row.get(8)?,
-        is_active: row.get::<_, i64>(9)? == 1,
+        logo_path: row.get(7)?,
+        opening_balance_cents: row.get(8)?,
+        notes: row.get(9)?,
+        is_active: row.get::<_, i64>(10)? == 1,
         balance_cents: 0,
-        created_at: row.get(10)?,
-        updated_at: row.get(11)?,
-        deleted_at: row.get(12)?,
+        created_at: row.get(11)?,
+        updated_at: row.get(12)?,
+        deleted_at: row.get(13)?,
     })
 }

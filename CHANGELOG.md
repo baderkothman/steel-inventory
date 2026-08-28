@@ -2,6 +2,27 @@
 
 This file consolidates the release notes that were previously stored as separate root-level documents. Only releases with preserved historical notes are listed.
 
+## 1.2.0 — 2026-08-28
+
+### Added
+
+- Dedicated customer quotations with Draft, Sent, Accepted, Rejected, Expired, and Converted states.
+- Snapshot customer details, products, SKUs, quantities, prices, discounts, tax/VAT, totals, notes, terms, and validity dates.
+- Transactional conversion of accepted quotations into normal sales invoices with current stock validation and duplicate-conversion protection.
+- Professional A4 quotation printouts with company branding and an explicit quotation-only disclaimer.
+- Validated company and supplier logo upload, preview, replacement, removal, and local application-data storage.
+
+### Changed
+
+- Purchase invoices and purchase returns now place the supplier logo, company name, contact details, reference, and date near the top of the printed document.
+- Print preview now waits for images and fonts before opening the system print dialog.
+- Quotation values remain isolated from inventory, customer balances, payments, revenue, sales reports, and accounting until conversion.
+
+### Verified
+
+- Added coverage for quotation stock isolation, backend-calculated totals, price snapshots, conversion rollback, duplicate conversion, archived products, A4 printing, logo fallback, embedded supplier branding, and aspect-ratio preservation.
+- Frontend production build, Rust formatting/checks, and all 34 backend tests pass.
+
 ## 1.0.11 — 2026-07-28
 
 ### Added

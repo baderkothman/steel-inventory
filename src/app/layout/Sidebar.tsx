@@ -17,6 +17,7 @@ import LocalShippingIcon from "@mui/icons-material/LocalShipping";
 import PeopleIcon from "@mui/icons-material/People";
 import ReceiptLongIcon from "@mui/icons-material/ReceiptLong";
 import PointOfSaleIcon from "@mui/icons-material/PointOfSale";
+import RequestQuoteOutlinedIcon from "@mui/icons-material/RequestQuoteOutlined";
 import PaidIcon from "@mui/icons-material/Paid";
 import PaymentsIcon from "@mui/icons-material/Payments";
 import AssessmentIcon from "@mui/icons-material/Assessment";
@@ -33,6 +34,7 @@ const items = [
   { to: "/customers", label: "Customers", icon: <PeopleIcon /> },
   { to: "/purchases", label: "Purchases", icon: <ReceiptLongIcon /> },
   { to: "/sales", label: "Sales Invoices", icon: <PointOfSaleIcon /> },
+  { to: "/quotations", label: "Quotations", icon: <RequestQuoteOutlinedIcon /> },
   { to: "/expenses", label: "Expenses", icon: <PaidIcon /> },
   { to: "/payments", label: "Payments", icon: <PaymentsIcon /> },
   { to: "/reports", label: "Reports", icon: <AssessmentIcon /> },

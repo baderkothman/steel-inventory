@@ -56,6 +56,7 @@ Suppliers:
 
 - `create_supplier`, `update_supplier`, `archive_supplier`, `restore_supplier`, `delete_supplier`
 - `get_supplier`, `list_suppliers`, `get_supplier_statement`
+- `save_supplier_logo`, `get_supplier_logo`, `remove_supplier_logo`
 
 Customers:
 
@@ -95,6 +96,22 @@ Return mutation commands require an administrator session. Create payloads inclu
 - `get_sales_invoice`
 - `list_sales_invoices`
 - `print_sales_invoice`
+
+## Quotations
+
+- `create_quotation`
+- `update_quotation`
+- `get_quotation`
+- `list_quotations`
+- `change_quotation_status`
+- `delete_quotation`
+- `convert_quotation`
+- `print_quotation`
+
+Draft quotations snapshot customer/product labels and quoted prices without creating stock,
+sales, payment, report, or accounting effects. Conversion accepts only an accepted,
+unexpired, unconverted quotation and creates the sales invoice plus quotation link in one
+transaction using the normal sales stock validation.
 
 ## Invoice and expense installments
 
@@ -166,6 +183,7 @@ Most report commands accept `ReportFilters` with an optional date range, supplie
 
 - `get_company_settings`
 - `update_company_settings`
+- `save_company_logo`, `get_company_logo`, `remove_company_logo`
 - `clear_all_data`
 
 `clear_all_data` requires the signed-in administrator's email/password and exact confirmation text.

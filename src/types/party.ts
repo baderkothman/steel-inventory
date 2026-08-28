@@ -6,6 +6,7 @@ export type Party = {
   email?: string | null;
   address?: string | null;
   tax_number?: string | null;
+  logo_path?: string | null;
   opening_balance_cents: number;
   notes?: string | null;
   is_active: boolean;

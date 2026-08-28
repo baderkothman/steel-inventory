@@ -4,10 +4,11 @@ use crate::{
     db::migrations::run_migrations,
     models::{
         ClearAllDataPayload, DateRangeFilters, ExpensePayload, InstallmentPaymentPayload,
-        MovementFilters, PartyPayload, PaymentFilters, PaymentPayload, ProductPayload,
-        PurchaseInvoicePayload, PurchaseItemPayload, PurchaseReturnItemPayload,
-        PurchaseReturnPayload, PurchaseReturnUpdatePayload, ReportFilters, SalesInvoicePayload,
-        SalesItemPayload, SetupAdminPayload,
+        LogoUploadPayload, MovementFilters, PartyPayload, PaymentFilters, PaymentPayload,
+        ProductPayload, PurchaseInvoicePayload, PurchaseItemPayload, PurchaseReturnItemPayload,
+        PurchaseReturnPayload, PurchaseReturnUpdatePayload, QuotationConversionPayload,
+        QuotationItemPayload, QuotationPayload, QuotationStatusPayload, ReportFilters,
+        SalesInvoicePayload, SalesItemPayload, SetupAdminPayload,
     },
     services::{
         auth_service::setup_admin,
@@ -29,11 +30,15 @@ use crate::{
         product_service::{archive_product, create_product, delete_product, latest_price},
         purchase_return_service::{
             cancel_purchase_return, create_purchase_return, get_purchase_return_context,
-            restore_purchase_return, update_purchase_return,
+            purchase_return_html, restore_purchase_return, update_purchase_return,
         },
         purchase_service::{
             cancel_purchase_invoice, create_purchase_invoice, list_purchase_invoices,
-            permanently_delete_purchase_invoice, restore_purchase_invoice,
+            permanently_delete_purchase_invoice, purchase_invoice_html, restore_purchase_invoice,
+        },
+        quotation_service::{
+            change_quotation_status, convert_quotation, create_quotation, get_quotation,
+            quotation_html,
         },
         report_service::{
             daily_sales_report, dashboard_summary, expense_report, payment_report, profit_report,
@@ -56,6 +61,390 @@ fn test_conn() -> Connection {
     conn.pragma_update(None, "foreign_keys", "ON").unwrap();
     run_migrations(&mut conn).expect("run migrations");
     conn
+}
+
+#[test]
+fn quotations_do_not_touch_stock_or_sales_and_convert_once_with_snapshot_prices() {
+    let conn = test_conn();
+    let user = make_admin(&conn);
+    let supplier = make_supplier(&conn, user, "Quotation Supplier");
+    let customer = create_party(
+        &conn,
+        user,
+        PartyKind::Customer,
+        PartyPayload {
+            name: "Quotation Customer".to_string(),
+            company_name: Some("Customer Company".to_string()),
+            phone: Some("+966500000000".to_string()),
+            email: Some("buyer@example.com".to_string()),
+            address: None,
+            tax_number: None,
+            opening_balance_cents: 0,
+            notes: None,
+        },
+    )
+    .unwrap();
+    let product = create_product(
+        &conn,
+        user,
+        ProductPayload {
+            initial_quantity: Some(10.0),
+            ..round_pipe_payload(Some(supplier), "Quotation Pipe", 1_000, 1_500)
+        },
+    )
+    .unwrap();
+
+    let quote = create_quotation(
+        &conn,
+        user,
+        QuotationPayload {
+            customer_id: customer.id,
+            quotation_number: Some("QT-SNAPSHOT-1".to_string()),
+            quotation_date: today_date(),
+            valid_until: today_date(),
+            discount_cents: 100,
+            tax_cents: 50,
+            notes: Some("Historical quote".to_string()),
+            terms: Some("Valid today".to_string()),
+            items: vec![QuotationItemPayload {
+                product_id: product.id,
+                quantity: 2.0,
+                unit_price_cents: 2_000,
+            }],
+        },
+    )
+    .unwrap();
+    assert_eq!(quote.quotation.subtotal_cents, 4_000);
+    assert_eq!(quote.quotation.total_cents, 3_950);
+    assert_eq!(quote.items[0].product_name, "Quotation Pipe");
+    assert_eq!(
+        conn.query_row(
+            "SELECT current_quantity FROM stock_levels WHERE product_id = ?1",
+            [product.id],
+            |row| row.get::<_, f64>(0)
+        )
+        .unwrap(),
+        10.0,
+        "saving a quotation must not reserve or reduce stock"
+    );
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM sales_invoices", [], |row| row
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM inventory_transactions WHERE reference_type = 'sales_invoice'",
+            [],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+
+    conn.execute(
+        "UPDATE product_prices SET selling_price_cents = 9000 WHERE product_id = ?1",
+        [product.id],
+    )
+    .unwrap();
+    change_quotation_status(
+        &conn,
+        user,
+        quote.quotation.id,
+        QuotationStatusPayload {
+            status: "sent".to_string(),
+        },
+    )
+    .unwrap();
+    change_quotation_status(
+        &conn,
+        user,
+        quote.quotation.id,
+        QuotationStatusPayload {
+            status: "accepted".to_string(),
+        },
+    )
+    .unwrap();
+    let invoice = convert_quotation(
+        &conn,
+        user,
+        quote.quotation.id,
+        QuotationConversionPayload {
+            invoice_number: Some("SI-FROM-QT-1".to_string()),
+            invoice_date: today_date(),
+            delivery_cents: 0,
+            paid_cents: 0,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT unit_price_cents FROM sales_invoice_items WHERE sales_invoice_id = ?1",
+            [invoice.id],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        2_000,
+        "conversion must use the historical quoted price"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT current_quantity FROM stock_levels WHERE product_id = ?1",
+            [product.id],
+            |row| row.get::<_, f64>(0)
+        )
+        .unwrap(),
+        8.0
+    );
+    let converted = get_quotation(&conn, quote.quotation.id).unwrap();
+    assert_eq!(converted.quotation.status, "converted");
+    assert_eq!(
+        converted.quotation.converted_sales_invoice_id,
+        Some(invoice.id)
+    );
+    assert!(convert_quotation(
+        &conn,
+        user,
+        quote.quotation.id,
+        QuotationConversionPayload {
+            invoice_number: None,
+            invoice_date: today_date(),
+            delivery_cents: 0,
+            paid_cents: 0,
+        },
+    )
+    .is_err());
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM sales_invoices", [], |row| row
+            .get::<_, i64>(0))
+            .unwrap(),
+        1,
+        "duplicate conversion must not create another sale"
+    );
+}
+
+#[test]
+fn quotation_conversion_rechecks_stock_and_print_is_a4_quote_not_invoice() {
+    let conn = test_conn();
+    let user = make_admin(&conn);
+    let supplier = make_supplier(&conn, user, "No Stock Supplier");
+    let customer = create_party(
+        &conn,
+        user,
+        PartyKind::Customer,
+        PartyPayload {
+            name: "Customer Without Full Contact".to_string(),
+            company_name: None,
+            phone: None,
+            email: None,
+            address: None,
+            tax_number: None,
+            opening_balance_cents: 0,
+            notes: None,
+        },
+    )
+    .unwrap();
+    let product = create_product(
+        &conn,
+        user,
+        ProductPayload {
+            initial_quantity: Some(1.0),
+            ..round_pipe_payload(
+                Some(supplier),
+                &"Very long product name ".repeat(12),
+                1_000,
+                1_500,
+            )
+        },
+    )
+    .unwrap();
+    let quote = create_quotation(
+        &conn,
+        user,
+        QuotationPayload {
+            customer_id: customer.id,
+            quotation_number: None,
+            quotation_date: today_date(),
+            valid_until: today_date(),
+            discount_cents: 0,
+            tax_cents: 0,
+            notes: None,
+            terms: None,
+            items: vec![QuotationItemPayload {
+                product_id: product.id,
+                quantity: 5.0,
+                unit_price_cents: 1_500,
+            }],
+        },
+    )
+    .unwrap();
+    let temp_root = std::env::temp_dir().join(format!(
+        "steel-inventory-quote-print-{}",
+        quote.quotation.id
+    ));
+    std::fs::create_dir_all(&temp_root).unwrap();
+    let db_path = temp_root.join("app.db");
+    let html = quotation_html(&conn, &db_path, quote.quotation.id).unwrap();
+    assert!(html.contains("QUOTATION"));
+    assert!(html.contains("not an invoice, receipt, completed sale, or stock reservation"));
+    assert!(html.contains("size:A4"));
+    assert!(html.contains("table-layout:fixed"));
+    assert!(html.contains("overflow-wrap:anywhere"));
+    change_quotation_status(
+        &conn,
+        user,
+        quote.quotation.id,
+        QuotationStatusPayload {
+            status: "sent".to_string(),
+        },
+    )
+    .unwrap();
+    change_quotation_status(
+        &conn,
+        user,
+        quote.quotation.id,
+        QuotationStatusPayload {
+            status: "accepted".to_string(),
+        },
+    )
+    .unwrap();
+    assert!(convert_quotation(
+        &conn,
+        user,
+        quote.quotation.id,
+        QuotationConversionPayload {
+            invoice_number: None,
+            invoice_date: today_date(),
+            delivery_cents: 0,
+            paid_cents: 0,
+        },
+    )
+    .is_err());
+    assert_eq!(
+        get_quotation(&conn, quote.quotation.id)
+            .unwrap()
+            .quotation
+            .status,
+        "accepted"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT current_quantity FROM stock_levels WHERE product_id = ?1",
+            [product.id],
+            |row| row.get::<_, f64>(0)
+        )
+        .unwrap(),
+        1.0
+    );
+    archive_product(&conn, user, product.id).unwrap();
+    let historical_html = quotation_html(&conn, &db_path, quote.quotation.id).unwrap();
+    assert!(historical_html.contains("Very long product name"));
+    assert!(convert_quotation(
+        &conn,
+        user,
+        quote.quotation.id,
+        QuotationConversionPayload {
+            invoice_number: None,
+            invoice_date: today_date(),
+            delivery_cents: 0,
+            paid_cents: 0,
+        },
+    )
+    .is_err());
+    let _ = std::fs::remove_dir_all(temp_root);
+}
+
+#[test]
+fn purchase_print_uses_supplier_logo_with_aspect_ratio_and_fallback() {
+    let conn = test_conn();
+    let user = make_admin(&conn);
+    let supplier = make_supplier(&conn, user, "Logo Supplier");
+    let product = create_product(
+        &conn,
+        user,
+        ProductPayload {
+            initial_quantity: Some(0.0),
+            ..round_pipe_payload(Some(supplier), "Logo Print Pipe", 1_000, 1_500)
+        },
+    )
+    .unwrap();
+    let purchase = create_purchase_invoice(
+        &conn,
+        user,
+        PurchaseInvoicePayload {
+            supplier_id: supplier,
+            invoice_number: Some("PI-LOGO-1".to_string()),
+            invoice_date: today_date(),
+            discount_cents: 0,
+            tax_cents: 0,
+            shipping_cents: 0,
+            paid_cents: 0,
+            notes: None,
+            items: vec![PurchaseItemPayload {
+                product_id: product.id,
+                quantity: 1.0,
+                unit_cost_cents: 1_000,
+            }],
+        },
+    )
+    .unwrap();
+    let temp_root =
+        std::env::temp_dir().join(format!("steel-inventory-supplier-logo-{}", purchase.id));
+    std::fs::create_dir_all(&temp_root).unwrap();
+    let db_path = temp_root.join("app.db");
+    let fallback_html = purchase_invoice_html(&conn, &db_path, purchase.id).unwrap();
+    assert!(fallback_html.contains("supplier-logo--fallback"));
+    let saved = crate::services::logo_service::save_logo(
+        &db_path,
+        "suppliers",
+        &supplier.to_string(),
+        &LogoUploadPayload {
+            mime_type: "image/png".to_string(),
+            base64_data: "iVBORw0KGgo=".to_string(),
+        },
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE suppliers SET logo_path = ?1 WHERE id = ?2",
+        rusqlite::params![saved, supplier],
+    )
+    .unwrap();
+    let logo_html = purchase_invoice_html(&conn, &db_path, purchase.id).unwrap();
+    assert!(logo_html.contains("data:image/png;base64"));
+    assert!(logo_html.contains("width:25mm;height:25mm"));
+    assert!(
+        logo_html.contains("object-fit:contain"),
+        "wide and tall logos must preserve aspect ratio"
+    );
+    assert!(logo_html.contains("Purchasing from"));
+    assert!(logo_html.contains("PI-LOGO-1"));
+    let invoice_item_id = get_purchase_return_context(&conn, purchase.id)
+        .unwrap()
+        .items[0]
+        .purchase_invoice_item_id;
+    let purchase_return = create_purchase_return(
+        &conn,
+        user,
+        PurchaseReturnPayload {
+            purchase_invoice_id: purchase.id,
+            return_date: today_date(),
+            reason: None,
+            notes: None,
+            idempotency_key: "supplier-logo-return-001".to_string(),
+            items: vec![PurchaseReturnItemPayload {
+                purchase_invoice_item_id: invoice_item_id,
+                quantity: 0.5,
+            }],
+        },
+    )
+    .unwrap();
+    let return_html =
+        purchase_return_html(&conn, &db_path, purchase_return.return_record.id).unwrap();
+    assert!(return_html.contains("data:image/png;base64"));
+    assert!(return_html.contains("Returning to supplier"));
+    assert!(return_html.contains("object-fit:contain"));
+    let _ = std::fs::remove_dir_all(temp_root);
 }
 
 #[test]

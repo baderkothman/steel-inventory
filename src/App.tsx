@@ -14,6 +14,7 @@ import { CustomersPage, SuppliersPage } from "./features/parties/PartiesPage";
 import { ProductsPage } from "./features/products/ProductsPage";
 import { ReportsPage } from "./features/reports/ReportsPage";
 import { SettingsPage } from "./features/settings/SettingsPage";
+import { QuotationsPage } from "./features/quotations/QuotationsPage";
 
 export default function App() {
   const { admin, hasAdmin, loading } = useAuth();
@@ -36,6 +37,7 @@ export default function App() {
         <Route path="customers" element={<CustomersPage />} />
         <Route path="purchases" element={<PurchasesPage />} />
         <Route path="sales" element={<SalesPage />} />
+        <Route path="quotations" element={<QuotationsPage />} />
         <Route path="expenses" element={<ExpensesPage />} />
         <Route path="payments" element={<PaymentsPage />} />
         <Route path="reports" element={<ReportsPage />} />

@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::{
@@ -7,6 +9,8 @@ use crate::{
     },
     services::{
         inventory_service::{insert_inventory_transaction, recalculate_stock, update_stock},
+        logo_service,
+        party_service::{self, PartyKind},
         settings_service::get_company_settings,
     },
     utils::{
@@ -378,9 +382,51 @@ pub fn get_purchase_invoice(conn: &Connection, id: i64) -> Result<InvoiceDetail,
     Ok(InvoiceDetail { invoice, items })
 }
 
-pub fn purchase_invoice_html(conn: &Connection, id: i64) -> Result<String, AppError> {
+pub fn purchase_invoice_html(
+    conn: &Connection,
+    db_path: &Path,
+    id: i64,
+) -> Result<String, AppError> {
     let settings = get_company_settings(conn)?;
     let detail = get_purchase_invoice(conn, id)?;
+    let supplier_id = detail
+        .invoice
+        .party_id
+        .ok_or_else(|| AppError::not_found("Supplier not found for this purchase invoice."))?;
+    let supplier = party_service::get_party(conn, PartyKind::Supplier, supplier_id)?;
+    let supplier_logo = logo_service::logo_data_uri(db_path, supplier.logo_path.as_deref());
+    let logo_html = supplier_logo
+        .map(|uri| format!(r#"<img class="supplier-logo" src="{}" alt="Supplier logo">"#, escape(&uri)))
+        .unwrap_or_else(|| {
+            format!(
+                r#"<div class="supplier-logo supplier-logo--fallback" aria-label="Supplier logo unavailable">{}</div>"#,
+                escape(&initials(supplier.company_name.as_deref().unwrap_or(&supplier.name)))
+            )
+        });
+    let supplier_name = supplier.company_name.as_deref().unwrap_or(&supplier.name);
+    let supplier_contact = [
+        supplier.phone.as_deref(),
+        supplier.email.as_deref(),
+        supplier.address.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|value| !value.trim().is_empty())
+    .map(escape)
+    .collect::<Vec<_>>()
+    .join(" · ");
+    let supplier_identity = format!(
+        r#"<section class="supplier-identity">{logo}<div><div class="supplier-eyebrow">Purchasing from</div><h2>{name}</h2><div class="muted">{contact}</div><div class="supplier-reference">Purchase reference: <strong>{number}</strong> · {date}</div></div></section>"#,
+        logo = logo_html,
+        name = escape(supplier_name),
+        contact = if supplier_contact.is_empty() {
+            "Contact details not provided".to_string()
+        } else {
+            supplier_contact
+        },
+        number = escape(&detail.invoice.invoice_number),
+        date = escape(&detail.invoice.invoice_date),
+    );
     let rows = detail
         .items
         .iter()
@@ -395,25 +441,26 @@ pub fn purchase_invoice_html(conn: &Connection, id: i64) -> Result<String, AppEr
             )
         })
         .collect::<String>();
-    Ok(invoice_html(
-        "Purchase Invoice",
-        &settings.company_name,
-        settings.phone.as_deref().unwrap_or(""),
-        settings.address.as_deref().unwrap_or(""),
-        &detail.invoice.invoice_number,
-        &detail.invoice.invoice_date,
-        &detail.invoice.party_name,
-        &rows,
-        detail.invoice.subtotal_cents,
-        detail.invoice.discount_cents,
-        detail.invoice.tax_cents,
-        detail.invoice.extra_cents,
-        "Shipping",
-        detail.invoice.total_cents,
-        detail.invoice.paid_cents,
-        detail.invoice.remaining_cents,
-        detail.invoice.notes.as_deref().unwrap_or(""),
-    ))
+    Ok(invoice_html(InvoiceHtmlData {
+        title: "Purchase Invoice",
+        company_name: &settings.company_name,
+        company_phone: settings.phone.as_deref().unwrap_or(""),
+        company_address: settings.address.as_deref().unwrap_or(""),
+        invoice_number: &detail.invoice.invoice_number,
+        invoice_date: &detail.invoice.invoice_date,
+        party_name: &detail.invoice.party_name,
+        party_identity_html: Some(&supplier_identity),
+        rows: &rows,
+        subtotal_cents: detail.invoice.subtotal_cents,
+        discount_cents: detail.invoice.discount_cents,
+        tax_cents: detail.invoice.tax_cents,
+        extra_cents: detail.invoice.extra_cents,
+        extra_label: "Shipping",
+        total_cents: detail.invoice.total_cents,
+        paid_cents: detail.invoice.paid_cents,
+        remaining_cents: detail.invoice.remaining_cents,
+        notes: detail.invoice.notes.as_deref().unwrap_or(""),
+    }))
 }
 
 fn validate_purchase_payload(payload: &PurchaseInvoicePayload) -> Result<(), AppError> {
@@ -538,36 +585,59 @@ fn map_item_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<InvoiceItemRow> {
     })
 }
 
-pub fn invoice_html(
-    title: &str,
-    company_name: &str,
-    company_phone: &str,
-    company_address: &str,
-    invoice_number: &str,
-    invoice_date: &str,
-    party_name: &str,
-    rows: &str,
-    subtotal_cents: i64,
-    discount_cents: i64,
-    tax_cents: i64,
-    extra_cents: i64,
-    extra_label: &str,
-    total_cents: i64,
-    paid_cents: i64,
-    remaining_cents: i64,
-    notes: &str,
-) -> String {
+pub struct InvoiceHtmlData<'a> {
+    pub title: &'a str,
+    pub company_name: &'a str,
+    pub company_phone: &'a str,
+    pub company_address: &'a str,
+    pub invoice_number: &'a str,
+    pub invoice_date: &'a str,
+    pub party_name: &'a str,
+    pub party_identity_html: Option<&'a str>,
+    pub rows: &'a str,
+    pub subtotal_cents: i64,
+    pub discount_cents: i64,
+    pub tax_cents: i64,
+    pub extra_cents: i64,
+    pub extra_label: &'a str,
+    pub total_cents: i64,
+    pub paid_cents: i64,
+    pub remaining_cents: i64,
+    pub notes: &'a str,
+}
+
+pub fn invoice_html(data: InvoiceHtmlData<'_>) -> String {
+    let InvoiceHtmlData {
+        title,
+        company_name,
+        company_phone,
+        company_address,
+        invoice_number,
+        invoice_date,
+        party_name,
+        party_identity_html,
+        rows,
+        subtotal_cents,
+        discount_cents,
+        tax_cents,
+        extra_cents,
+        extra_label,
+        total_cents,
+        paid_cents,
+        remaining_cents,
+        notes,
+    } = data;
     format!(
         r#"<!doctype html>
 <html><head><meta charset="utf-8"><title>{title} {invoice_number}</title>
 <style>
 *{{box-sizing:border-box}} body{{font-family:Inter,"Segoe UI",Arial,sans-serif;color:#16202a;margin:14mm 12mm 16mm;font-size:12px}} .header{{display:flex;justify-content:space-between;gap:24px;border-bottom:2px solid #245a61;padding-bottom:16px;margin-bottom:24px}}
-h1{{margin:0;font-size:23px;letter-spacing:-.02em}} .muted{{color:#5b6773;font-size:12px;margin-top:3px}} table{{width:100%;border-collapse:collapse;margin-top:20px}} thead{{display:table-header-group}} tr{{break-inside:avoid;page-break-inside:avoid}} th,td{{border-bottom:1px solid #d9e0e7;padding:9px 10px;text-align:left;vertical-align:top}} th{{background:#e9f0f1;color:#20383c;font-weight:700}} tbody tr:nth-child(even){{background:#f8fafb}} .totals{{margin-left:auto;width:320px;margin-top:20px;break-inside:avoid}} .totals div{{display:flex;justify-content:space-between;padding:6px 0}} .total{{font-weight:700;border-top:2px solid #245a61}} .page-footer{{display:none}} @page{{size:auto;margin:14mm 12mm 16mm}} @media print{{button{{display:none}} body{{margin:0}} .page-footer{{display:block;position:fixed;left:0;right:0;bottom:-7mm;color:#687680;font-size:9px}} .page-number{{float:right}} .page-number:after{{content:counter(page)}}}}
+h1{{margin:0;font-size:23px;letter-spacing:-.02em}} .muted{{color:#5b6773;font-size:12px;margin-top:3px}} .supplier-identity{{display:flex;align-items:flex-start;gap:16px;margin:0 0 20px;padding:14px;border:1px solid #cbd9dc;background:#f5f8f8;break-inside:avoid}}.supplier-logo{{width:25mm;height:25mm;flex:0 0 25mm;object-fit:contain}}.supplier-logo--fallback{{display:grid;place-items:center;border:1px solid #9cb0b5;color:#245a61;font-size:16px;font-weight:800}}.supplier-eyebrow{{color:#1f6f78;font-size:9px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}}.supplier-identity h2{{margin:2px 0 3px;font-size:18px;overflow-wrap:anywhere}}.supplier-reference{{margin-top:8px}} table{{width:100%;border-collapse:collapse;margin-top:20px;table-layout:fixed}} thead{{display:table-header-group}} tr{{break-inside:avoid;page-break-inside:avoid}} th,td{{border-bottom:1px solid #d9e0e7;padding:9px 10px;text-align:left;vertical-align:top;overflow-wrap:anywhere}} th{{background:#e9f0f1;color:#20383c;font-weight:700}} tbody tr:nth-child(even){{background:#f8fafb}} .totals{{margin-left:auto;width:320px;margin-top:20px;break-inside:avoid}} .totals div{{display:flex;justify-content:space-between;padding:6px 0}} .total{{font-weight:700;border-top:2px solid #245a61}} .page-footer{{display:none}} @page{{size:A4;margin:14mm 12mm 16mm}} @media print{{button{{display:none}} body{{margin:0}} .page-footer{{display:block;position:fixed;left:0;right:0;bottom:-7mm;color:#687680;font-size:9px}} .page-number{{float:right}} .page-number:after{{content:counter(page)}}}}
 </style></head>
 <body>
 <button onclick="window.print()">Print / Save PDF</button>
 <div class="header"><div><h1>{company}</h1><div class="muted">{phone}</div><div class="muted">{address}</div></div><div><h1>{title}</h1><div>{invoice_number}</div><div>{invoice_date}</div></div></div>
-<div><strong>Party:</strong> {party}</div>
+{party_identity}<div class="party-line"><strong>Party:</strong> {party}</div>
 <table><thead><tr><th>SKU</th><th>Product</th><th>Quantity</th><th>Unit Price</th><th>Total</th></tr></thead><tbody>{rows}</tbody></table>
 <div class="totals"><div><span>Subtotal</span><span>{subtotal}</span></div><div><span>Discount</span><span>{discount}</span></div><div><span>Tax</span><span>{tax}</span></div><div><span>{extra_label}</span><span>{extra}</span></div><div class="total"><span>Total</span><span>{total}</span></div><div><span>Paid</span><span>{paid}</span></div><div><span>Remaining</span><span>{remaining}</span></div></div>
 <p><strong>Notes:</strong> {notes}</p>
@@ -580,6 +650,7 @@ h1{{margin:0;font-size:23px;letter-spacing:-.02em}} .muted{{color:#5b6773;font-s
         phone = escape(company_phone),
         address = escape(company_address),
         party = escape(party_name),
+        party_identity = party_identity_html.unwrap_or(""),
         rows = rows,
         subtotal = money(subtotal_cents),
         discount = money(discount_cents),
@@ -591,6 +662,20 @@ h1{{margin:0;font-size:23px;letter-spacing:-.02em}} .muted{{color:#5b6773;font-s
         remaining = money(remaining_cents),
         notes = escape(notes)
     )
+}
+
+fn initials(value: &str) -> String {
+    let result = value
+        .split_whitespace()
+        .filter_map(|part| part.chars().next())
+        .take(2)
+        .collect::<String>()
+        .to_uppercase();
+    if result.is_empty() {
+        "SU".to_string()
+    } else {
+        result
+    }
 }
 
 pub fn escape(value: &str) -> String {

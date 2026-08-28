@@ -7,7 +7,7 @@ The SQLite schema is created through ordered, append-only migrations in `src-tau
 ### Identity and settings
 
 - `users` — the local administrator and Argon2 password hash
-- `company_settings` — company identity, currency, numbering, stock policy, backup path, tax/profit defaults, and retention setting
+- `company_settings` — company identity/logo reference, currency, invoice/quotation numbering, stock policy, backup path, tax/profit defaults, and retention setting
 - `audit_logs` — actor, action, table, record, and before/after JSON
 - `backups` — backup path, type, status, notes, and timestamp
 
@@ -21,7 +21,7 @@ The SQLite schema is created through ordered, append-only migrations in `src-tau
 
 ### Parties and settlement
 
-- `suppliers` and `customers` — contact details, opening balance, notes, and lifecycle state
+- `suppliers` and `customers` — contact details, opening balance, notes, and lifecycle state; suppliers may reference a validated logo file
 - `payments` — customer money-in or supplier money-out, optionally linked to an invoice
 - `supplier_settlement_payments` — dated payments against a supplier sold-goods settlement period
 
@@ -35,6 +35,15 @@ The SQLite schema is created through ordered, append-only migrations in `src-tau
 
 - `sales_invoices` and `sales_invoice_items` — customer or walk-in sale, payment state, and cost/price/profit snapshots
 - `walk_in_sales_payments` — installments for sales without a customer party
+
+### Quotations
+
+- `quotations` — customer/contact snapshot, validity dates, totals, lifecycle status, and optional converted sales-invoice link
+- `quotation_items` — immutable product name/SKU, quantity, quoted unit price, and line-total snapshots
+
+Quotation rows do not participate in inventory, party balances, sales reports, revenue, or
+payments. Only conversion creates a sales invoice and its normal live effects. Snapshot fields
+keep historical documents printable if customer data, product names, or prices later change.
 
 ### Expenses
 
@@ -101,6 +110,7 @@ Editing a return increments `current_revision`, writes new item rows, marks old 
 7. `007_installment_payments` — expense and walk-in sale installment ledgers
 8. `008_remove_demo_data` — safe retirement of previously seeded demo records
 9. `009_purchase_returns` — revisioned purchase returns and inventory links
+10. `010_quotations_and_branding` — quotation snapshots/status/conversion links, quotation numbering, and company/supplier logo references
 
 Never edit a migration that may already have run on a user database. Add the next numbered migration and register it in `src-tauri/src/db/migrations.rs`.
 

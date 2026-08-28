@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::Path};
 
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 
@@ -10,6 +10,8 @@ use crate::{
     },
     services::{
         inventory_service::{recalculate_stock, update_stock},
+        logo_service,
+        party_service::{self, PartyKind},
         purchase_service::{escape, get_purchase_invoice, money},
         settings_service::get_company_settings,
     },
@@ -449,10 +451,50 @@ pub fn get_purchase_return(conn: &Connection, id: i64) -> Result<PurchaseReturnD
     })
 }
 
-pub fn purchase_return_html(conn: &Connection, id: i64) -> Result<String, AppError> {
+pub fn purchase_return_html(
+    conn: &Connection,
+    db_path: &Path,
+    id: i64,
+) -> Result<String, AppError> {
     let detail = get_purchase_return(conn, id)?;
     let invoice = get_purchase_invoice(conn, detail.return_record.purchase_invoice_id)?;
     let settings = get_company_settings(conn)?;
+    let supplier =
+        party_service::get_party(conn, PartyKind::Supplier, detail.return_record.supplier_id)?;
+    let supplier_logo = logo_service::logo_data_uri(db_path, supplier.logo_path.as_deref())
+        .map(|uri| {
+            format!(
+                r#"<img class="supplier-logo" src="{}" alt="Supplier logo">"#,
+                escape(&uri)
+            )
+        })
+        .unwrap_or_else(|| {
+            let initials = supplier
+                .company_name
+                .as_deref()
+                .unwrap_or(&supplier.name)
+                .split_whitespace()
+                .filter_map(|part| part.chars().next())
+                .take(2)
+                .collect::<String>()
+                .to_uppercase();
+            format!(
+                r#"<div class="supplier-logo fallback">{}</div>"#,
+                escape(if initials.is_empty() { "SU" } else { &initials })
+            )
+        });
+    let supplier_name = supplier.company_name.as_deref().unwrap_or(&supplier.name);
+    let supplier_contact = [
+        supplier.phone.as_deref(),
+        supplier.email.as_deref(),
+        supplier.address.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|value| !value.trim().is_empty())
+    .map(escape)
+    .collect::<Vec<_>>()
+    .join(" · ");
     let rows = detail
         .items
         .iter()
@@ -470,10 +512,11 @@ pub fn purchase_return_html(conn: &Connection, id: i64) -> Result<String, AppErr
     let record = detail.return_record;
     Ok(format!(
         r#"<!doctype html><html><head><meta charset="utf-8"><title>Purchase Return {number}</title>
-<style>*{{box-sizing:border-box}}body{{font-family:Inter,"Segoe UI",Arial,sans-serif;color:#16202a;margin:14mm 12mm;font-size:12px}}header{{display:flex;justify-content:space-between;border-bottom:2px solid #245a61;padding-bottom:14px;margin-bottom:20px}}h1{{margin:0;font-size:22px}}.muted{{color:#5b6773;margin-top:3px}}table{{width:100%;border-collapse:collapse;margin-top:18px}}th,td{{border-bottom:1px solid #d9e0e7;padding:8px;text-align:left}}th{{background:#e9f0f1}}.totals{{margin-left:auto;width:300px;margin-top:18px}}.totals div{{display:flex;justify-content:space-between;padding:5px 0}}.total{{font-weight:700;border-top:2px solid #245a61}}@page{{margin:14mm 12mm}}@media print{{button{{display:none}}body{{margin:0}}}}</style>
+<style>*{{box-sizing:border-box}}body{{font-family:Inter,"Segoe UI",Arial,sans-serif;color:#16202a;margin:14mm 12mm;font-size:12px}}header{{display:flex;justify-content:space-between;border-bottom:2px solid #245a61;padding-bottom:14px;margin-bottom:20px}}h1{{margin:0;font-size:22px}}.muted{{color:#5b6773;margin-top:3px}}.supplier{{display:flex;gap:16px;align-items:flex-start;padding:14px;border:1px solid #cbd9dc;background:#f5f8f8;break-inside:avoid}}.supplier-logo{{width:25mm;height:25mm;flex:0 0 25mm;object-fit:contain}}.supplier-logo.fallback{{display:grid;place-items:center;border:1px solid #9cb0b5;color:#245a61;font-size:16px;font-weight:800}}.supplier h2{{margin:2px 0;font-size:18px;overflow-wrap:anywhere}}.eyebrow{{color:#1f6f78;font-size:9px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}}table{{width:100%;border-collapse:collapse;table-layout:fixed;margin-top:18px}}thead{{display:table-header-group}}tr{{break-inside:avoid}}th,td{{border-bottom:1px solid #d9e0e7;padding:8px;text-align:left;overflow-wrap:anywhere}}th{{background:#e9f0f1}}.totals{{margin-left:auto;width:300px;margin-top:18px;break-inside:avoid}}.totals div{{display:flex;justify-content:space-between;padding:5px 0}}.total{{font-weight:700;border-top:2px solid #245a61}}@page{{size:A4;margin:14mm 12mm}}@media print{{button{{display:none}}body{{margin:0}}}}</style>
 </head><body><button onclick="window.print()">Print / Save PDF</button>
 <header><div><h1>{company}</h1><div class="muted">{phone}</div><div class="muted">{address}</div></div><div><h1>Purchase Return</h1><div>{number}</div><div>{date}</div><div class="muted">{status}</div></div></header>
-<div><strong>Supplier:</strong> {supplier}</div><div><strong>Original invoice:</strong> {invoice_number}</div>
+<section class="supplier">{supplier_logo}<div><div class="eyebrow">Returning to supplier</div><h2>{supplier_company}</h2><div class="muted">{supplier_contact}</div><div><strong>Return reference:</strong> {number} · {date}</div></div></section>
+<div style="margin-top:14px"><strong>Supplier contact:</strong> {supplier}</div><div><strong>Original invoice:</strong> {invoice_number}</div>
 <table><thead><tr><th>SKU</th><th>Product</th><th>Quantity</th><th>Unit cost</th><th>Total</th></tr></thead><tbody>{rows}</tbody></table>
 <div class="totals"><div><span>Subtotal</span><span>{subtotal}</span></div><div><span>Discount credit</span><span>{discount}</span></div><div><span>Tax credit</span><span>{tax}</span></div><div><span>Shipping credit</span><span>{shipping}</span></div><div class="total"><span>Return total</span><span>{total}</span></div></div>
 <p><strong>Reason:</strong> {reason}</p><p><strong>Notes:</strong> {notes}</p>
@@ -485,6 +528,13 @@ pub fn purchase_return_html(conn: &Connection, id: i64) -> Result<String, AppErr
         date = escape(&record.return_date),
         status = escape(&record.status),
         supplier = escape(&invoice.invoice.party_name),
+        supplier_logo = supplier_logo,
+        supplier_company = escape(supplier_name),
+        supplier_contact = if supplier_contact.is_empty() {
+            "Contact details not provided".to_string()
+        } else {
+            supplier_contact
+        },
         invoice_number = escape(&invoice.invoice.invoice_number),
         rows = rows,
         subtotal = money(record.subtotal_cents),

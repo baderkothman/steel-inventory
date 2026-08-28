@@ -2,7 +2,7 @@
 
 Steel Inventory is an offline-first desktop application for running a small steel inventory business. It manages supplier-specific products, purchases, purchase returns, sales, expenses, payments, stock movement, statements, reports, printing, and local backups from one SQLite database.
 
-Current application version: `1.0.11`.
+Current application version: `1.2.0`.
 
 ## What it does
 

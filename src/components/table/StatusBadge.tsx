@@ -1,8 +1,8 @@
 import { Chip } from "@mui/material";
 
-const success = new Set(["active", "paid", "completed", "success", "in"]);
-const warning = new Set(["partial", "unpaid", "warning", "out"]);
-const danger = new Set(["cancelled", "deleted", "failed", "archived"]);
+const success = new Set(["active", "paid", "completed", "success", "in", "accepted", "converted"]);
+const warning = new Set(["partial", "unpaid", "warning", "out", "sent", "draft"]);
+const danger = new Set(["cancelled", "deleted", "failed", "archived", "rejected", "expired"]);
 
 export function StatusBadge({ value }: { value?: string | null }) {
   const normalized = (value || "unknown").trim().toLowerCase();

@@ -28,6 +28,8 @@ const supplierReports: ReportKey[] = [
 ];
 const categoryReports: ReportKey[] = ["stock", "stock_count", "cheapest_supplier", "best_selling", "low_stock"];
 
+const stockReportPrimaryColumns = ["product_name", "thickness_mm", "selling_price_cents"] as const;
+
 export function ReportsPage() {
   const [report, setReport] = useState<ReportKey>("daily_sales");
   const [filters, setFilters] = useState<ReportFilters>({ date_from: today(), date_to: today() });
@@ -52,7 +54,8 @@ export function ReportsPage() {
   const columns = useMemo(
     () => orderReportColumns(
       report,
-      Array.from(new Set(data.flatMap((row) => Object.keys(row))))
+      Array.from(new Set(data.flatMap((row) => Object.keys(row)))),
+      stockReportPrimaryColumns
     ),
     [data, report]
   );
@@ -249,8 +252,7 @@ function buildStockCountSheet(
   </div>
   <table>
     <thead><tr>
-      <th>Name</th><th>Thickness</th><th>Price</th><th>Supplier</th><th>Category</th><th>Location</th>
-      <th>Unit</th><th>System Qty</th><th>Counted Qty</th><th>Difference</th>
+      <th>Name</th><th>Thickness</th><th>Price</th><th>Supplier</th><th>Category</th><th>Location</th><th>Unit</th><th>System Qty</th><th>Counted Qty</th><th>Difference</th>
     </tr></thead>
     <tbody>${body || '<tr><td colspan="10">No products.</td></tr>'}</tbody>
   </table>

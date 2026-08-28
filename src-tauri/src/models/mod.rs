@@ -220,6 +220,7 @@ pub struct PartyRow {
     pub email: Option<String>,
     pub address: Option<String>,
     pub tax_number: Option<String>,
+    pub logo_path: Option<String>,
     pub opening_balance_cents: i64,
     pub notes: Option<String>,
     pub is_active: bool,
@@ -358,6 +359,95 @@ pub struct InvoiceItemRow {
 pub struct InvoiceDetail {
     pub invoice: InvoiceListRow,
     pub items: Vec<InvoiceItemRow>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct QuotationItemPayload {
+    pub product_id: i64,
+    pub quantity: f64,
+    pub unit_price_cents: i64,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct QuotationPayload {
+    pub customer_id: i64,
+    pub quotation_number: Option<String>,
+    pub quotation_date: String,
+    pub valid_until: String,
+    pub discount_cents: i64,
+    pub tax_cents: i64,
+    pub notes: Option<String>,
+    pub terms: Option<String>,
+    pub items: Vec<QuotationItemPayload>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct QuotationFilters {
+    pub search: Option<String>,
+    pub status: Option<String>,
+    pub date_from: Option<String>,
+    pub date_to: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct QuotationListRow {
+    pub id: i64,
+    pub customer_id: Option<i64>,
+    pub quotation_number: String,
+    pub quotation_date: String,
+    pub valid_until: String,
+    pub customer_name: String,
+    pub subtotal_cents: i64,
+    pub discount_cents: i64,
+    pub tax_cents: i64,
+    pub total_cents: i64,
+    pub status: String,
+    pub converted_sales_invoice_id: Option<i64>,
+    pub notes: Option<String>,
+    pub terms: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct QuotationItemRow {
+    pub id: i64,
+    pub product_id: Option<i64>,
+    pub sku: String,
+    pub product_name: String,
+    pub quantity: f64,
+    pub unit_price_cents: i64,
+    pub line_total_cents: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct QuotationDetail {
+    pub quotation: QuotationListRow,
+    pub customer_company_name: Option<String>,
+    pub customer_phone: Option<String>,
+    pub customer_email: Option<String>,
+    pub customer_address: Option<String>,
+    pub customer_tax_number: Option<String>,
+    pub items: Vec<QuotationItemRow>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct QuotationStatusPayload {
+    pub status: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct QuotationConversionPayload {
+    pub invoice_number: Option<String>,
+    pub invoice_date: String,
+    pub delivery_cents: i64,
+    pub paid_cents: i64,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct LogoUploadPayload {
+    pub mime_type: String,
+    pub base64_data: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -562,6 +652,8 @@ pub struct CompanySettings {
     pub default_currency: String,
     pub invoice_prefix_sales: String,
     pub invoice_prefix_purchase: String,
+    pub quotation_prefix: String,
+    pub logo_path: Option<String>,
     pub allow_negative_stock: bool,
     pub backup_path: Option<String>,
     pub default_tax_rate: f64,
@@ -581,6 +673,7 @@ pub struct CompanySettingsPayload {
     pub default_currency: String,
     pub invoice_prefix_sales: String,
     pub invoice_prefix_purchase: String,
+    pub quotation_prefix: String,
     pub allow_negative_stock: bool,
     pub backup_path: Option<String>,
     pub default_tax_rate: f64,

@@ -35,6 +35,14 @@ import type {
   VariantFilters
 } from "../types/product";
 import type { DashboardSummary, ReportFilters, ReportRow } from "../types/report";
+import type {
+  QuotationConversionPayload,
+  QuotationDetail,
+  QuotationFilters,
+  QuotationListRow,
+  QuotationPayload,
+  QuotationStatus
+} from "../types/quotation";
 
 export const authApi = {
   hasAdmin: () => call<boolean>("has_admin"),
@@ -100,7 +108,13 @@ function partyApi(kind: "supplier" | "customer") {
   };
 }
 
-export const supplierApi = partyApi("supplier");
+export const supplierApi = {
+  ...partyApi("supplier"),
+  saveLogo: (id: number, payload: { mime_type: string; base64_data: string }) =>
+    call<Party>("save_supplier_logo", { id, payload }),
+  getLogo: (id: number) => call<string | null>("get_supplier_logo", { id }),
+  removeLogo: (id: number) => call<Party>("remove_supplier_logo", { id })
+};
 export const customerApi = partyApi("customer");
 
 export const purchaseApi = {
@@ -131,6 +145,21 @@ export const salesApi = {
   permanentlyDelete: (id: number) =>
     call<void>("permanently_delete_sales_invoice", { id }),
   print: (id: number) => call<string>("print_sales_invoice", { id })
+};
+
+export const quotationApi = {
+  list: (filters: QuotationFilters = {}) =>
+    call<QuotationListRow[]>("list_quotations", { filters }),
+  get: (id: number) => call<QuotationDetail>("get_quotation", { id }),
+  create: (payload: QuotationPayload) => call<QuotationDetail>("create_quotation", { payload }),
+  update: (id: number, payload: QuotationPayload) =>
+    call<QuotationDetail>("update_quotation", { id, payload }),
+  changeStatus: (id: number, status: QuotationStatus) =>
+    call<QuotationDetail>("change_quotation_status", { id, payload: { status } }),
+  delete: (id: number) => call<void>("delete_quotation", { id }),
+  convert: (id: number, payload: QuotationConversionPayload) =>
+    call<InvoiceSaveResult>("convert_quotation", { id, payload }),
+  print: (id: number) => call<string>("print_quotation", { id })
 };
 
 export const invoicePaymentApi = {
@@ -189,8 +218,12 @@ export const reportApi = {
 
 export const settingsApi = {
   get: () => call<CompanySettings>("get_company_settings"),
-  update: (payload: Omit<CompanySettings, "id" | "created_at" | "updated_at">) =>
+  update: (payload: Omit<CompanySettings, "id" | "created_at" | "updated_at" | "logo_path">) =>
     call<CompanySettings>("update_company_settings", { payload }),
+  saveLogo: (payload: { mime_type: string; base64_data: string }) =>
+    call<CompanySettings>("save_company_logo", { payload }),
+  getLogo: () => call<string | null>("get_company_logo"),
+  removeLogo: () => call<CompanySettings>("remove_company_logo"),
   clearAllData: (payload: {
     admin_email: string;
     admin_password: string;

@@ -31,6 +31,8 @@ export type CompanySettings = {
   default_currency: string;
   invoice_prefix_sales: string;
   invoice_prefix_purchase: string;
+  quotation_prefix: string;
+  logo_path?: string | null;
   allow_negative_stock: boolean;
   backup_path?: string | null;
   default_tax_rate: number;

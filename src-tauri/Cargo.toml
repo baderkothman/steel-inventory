@@ -1,6 +1,6 @@
 [package]
 name = "steel_inventory"
-version = "1.1.0"
+version = "1.2.0"
 description = "Offline-first steel inventory, invoices, expenses, and reporting desktop system"
 authors = ["Steel Inventory"]
 edition = "2021"
@@ -15,6 +15,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 argon2 = "0.5"
+base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 directories = "5"
 rand_core = { version = "0.6", features = ["std"] }

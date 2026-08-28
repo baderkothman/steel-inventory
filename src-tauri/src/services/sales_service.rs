@@ -10,7 +10,7 @@ use crate::{
             current_stock, insert_inventory_transaction, recalculate_stock, update_stock,
         },
         product_service::latest_price,
-        purchase_service::{escape, invoice_html, money, next_invoice_number},
+        purchase_service::{escape, invoice_html, money, next_invoice_number, InvoiceHtmlData},
         settings_service::get_company_settings,
     },
     utils::{
@@ -23,6 +23,17 @@ use crate::{
 };
 
 pub fn create_sales_invoice(
+    conn: &Connection,
+    user_id: i64,
+    payload: SalesInvoicePayload,
+) -> Result<InvoiceSaveResult, AppError> {
+    let tx = conn.unchecked_transaction()?;
+    let result = create_sales_invoice_in_transaction(&tx, user_id, payload)?;
+    tx.commit()?;
+    Ok(result)
+}
+
+pub(crate) fn create_sales_invoice_in_transaction(
     conn: &Connection,
     user_id: i64,
     payload: SalesInvoicePayload,
@@ -72,8 +83,7 @@ pub fn create_sales_invoice(
         }
     }
 
-    let tx = conn.unchecked_transaction()?;
-    tx.execute(
+    conn.execute(
         "INSERT INTO sales_invoices
          (customer_id, invoice_number, invoice_date, subtotal_cents, discount_cents, tax_cents,
           delivery_cents, total_cents, paid_cents, remaining_cents, payment_status, sales_status,
@@ -96,14 +106,14 @@ pub fn create_sales_invoice(
             now
         ],
     )?;
-    let invoice_id = tx.last_insert_rowid();
+    let invoice_id = conn.last_insert_rowid();
 
     for item in payload.items.iter() {
-        let (unit_cost, _, _) = latest_price(&tx, item.product_id)?;
+        let (unit_cost, _, _) = latest_price(conn, item.product_id)?;
         let total_price = (item.quantity * item.unit_price_cents as f64).round() as i64;
         let total_cost = (item.quantity * unit_cost as f64).round() as i64;
         let profit = total_price - total_cost;
-        tx.execute(
+        conn.execute(
             "INSERT INTO sales_invoice_items
              (sales_invoice_id, product_id, quantity, unit_cost_cents, unit_price_cents,
               total_cost_cents, total_price_cents, profit_cents, created_at)
@@ -121,13 +131,13 @@ pub fn create_sales_invoice(
             ],
         )?;
         update_stock(
-            &tx,
+            conn,
             item.product_id,
             -item.quantity,
             settings.allow_negative_stock,
         )?;
         insert_inventory_transaction(
-            &tx,
+            conn,
             item.product_id,
             "sale",
             "sales_invoice",
@@ -142,7 +152,7 @@ pub fn create_sales_invoice(
 
     if payload.paid_cents > 0 {
         if let Some(customer_id) = payload.customer_id {
-            tx.execute(
+            conn.execute(
                 "INSERT INTO payments
                  (party_type, party_id, payment_direction, amount_cents, currency, payment_method,
                   payment_date, reference_type, reference_id, notes, created_by, created_at)
@@ -159,7 +169,7 @@ pub fn create_sales_invoice(
                 ],
             )?;
         } else {
-            tx.execute(
+            conn.execute(
                 "INSERT INTO walk_in_sales_payments
                  (sales_invoice_id, amount_cents, currency, payment_method, payment_date,
                   notes, created_by, created_at)
@@ -180,7 +190,7 @@ pub fn create_sales_invoice(
     }
 
     insert_audit_log(
-        &tx,
+        conn,
         user_id,
         "create",
         "sales_invoices",
@@ -188,8 +198,6 @@ pub fn create_sales_invoice(
         None,
         Some(serde_json::json!({"id": invoice_id, "invoice_number": invoice_number})),
     )?;
-    tx.commit()?;
-
     Ok(InvoiceSaveResult {
         id: invoice_id,
         invoice_number,
@@ -437,25 +445,26 @@ pub fn sales_invoice_html(conn: &Connection, id: i64) -> Result<String, AppError
             )
         })
         .collect::<String>();
-    Ok(invoice_html(
-        "Sales Invoice",
-        &settings.company_name,
-        settings.phone.as_deref().unwrap_or(""),
-        settings.address.as_deref().unwrap_or(""),
-        &detail.invoice.invoice_number,
-        &detail.invoice.invoice_date,
-        &detail.invoice.party_name,
-        &rows,
-        detail.invoice.subtotal_cents,
-        detail.invoice.discount_cents,
-        detail.invoice.tax_cents,
-        detail.invoice.extra_cents,
-        "Delivery",
-        detail.invoice.total_cents,
-        detail.invoice.paid_cents,
-        detail.invoice.remaining_cents,
-        detail.invoice.notes.as_deref().unwrap_or(""),
-    ))
+    Ok(invoice_html(InvoiceHtmlData {
+        title: "Sales Invoice",
+        company_name: &settings.company_name,
+        company_phone: settings.phone.as_deref().unwrap_or(""),
+        company_address: settings.address.as_deref().unwrap_or(""),
+        invoice_number: &detail.invoice.invoice_number,
+        invoice_date: &detail.invoice.invoice_date,
+        party_name: &detail.invoice.party_name,
+        party_identity_html: None,
+        rows: &rows,
+        subtotal_cents: detail.invoice.subtotal_cents,
+        discount_cents: detail.invoice.discount_cents,
+        tax_cents: detail.invoice.tax_cents,
+        extra_cents: detail.invoice.extra_cents,
+        extra_label: "Delivery",
+        total_cents: detail.invoice.total_cents,
+        paid_cents: detail.invoice.paid_cents,
+        remaining_cents: detail.invoice.remaining_cents,
+        notes: detail.invoice.notes.as_deref().unwrap_or(""),
+    }))
 }
 
 fn validate_sales_payload(payload: &SalesInvoicePayload) -> Result<(), AppError> {

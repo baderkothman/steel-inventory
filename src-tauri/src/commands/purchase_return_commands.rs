@@ -69,5 +69,5 @@ pub fn restore_purchase_return(state: State<'_, AppState>, id: i64) -> Result<()
 pub fn print_purchase_return(state: State<'_, AppState>, id: i64) -> Result<String, AppError> {
     state.require_admin_id()?;
     let conn = state.open_conn()?;
-    purchase_return_service::purchase_return_html(&conn, id)
+    purchase_return_service::purchase_return_html(&conn, state.db_path(), id)
 }

@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import {
   Alert,
   Button,
@@ -18,12 +18,17 @@ type PrintDialogProps = {
 
 export function PrintDialog({ open, html, onClose }: PrintDialogProps) {
   const frameId = useId();
+  const [frameReady, setFrameReady] = useState(false);
   const [printNotice, setPrintNotice] = useState<{
     message: string;
     severity: "info" | "error";
   } | null>(null);
 
-  function handlePrint() {
+  useEffect(() => {
+    setFrameReady(false);
+  }, [html, open]);
+
+  async function handlePrint() {
     const frame = document.getElementById(frameId) as HTMLIFrameElement | null;
     if (!frame?.contentWindow) {
       setPrintNotice({
@@ -33,21 +38,20 @@ export function PrintDialog({ open, html, onClose }: PrintDialogProps) {
       return;
     }
 
-    setPrintNotice({
-      severity: "info",
-      message: "Print request sent. Choose “Save as PDF” in the system dialog to create a PDF."
-    });
-    window.setTimeout(() => {
-      try {
-        frame.contentWindow?.focus();
-        frame.contentWindow?.print();
-      } catch {
-        setPrintNotice({
-          severity: "error",
-          message: "The print dialog could not be opened. Please try again."
-        });
-      }
-    }, 150);
+    try {
+      await waitForImages(frame.contentDocument);
+      setPrintNotice({
+        severity: "info",
+        message: "Print request sent. Choose “Save as PDF” in the system dialog to create a PDF."
+      });
+      frame.contentWindow.focus();
+      frame.contentWindow.print();
+    } catch {
+      setPrintNotice({
+        severity: "error",
+        message: "The print preview could not finish loading. Please try again."
+      });
+    }
   }
 
   return (
@@ -64,12 +68,13 @@ export function PrintDialog({ open, html, onClose }: PrintDialogProps) {
             // sandboxed-modals flag from turning that call into a no-op. Scripting stays
             // disabled, so the frame cannot act on the same-origin grant.
             sandbox="allow-same-origin allow-modals"
+            onLoad={() => setFrameReady(true)}
             style={{ border: 0, width: "100%", height: "100%" }}
           />
         </DialogContent>
         <DialogActions>
           <Button onClick={onClose}>Close</Button>
-          <Button startIcon={<PrintIcon />} variant="contained" onClick={handlePrint}>
+          <Button startIcon={<PrintIcon />} variant="contained" onClick={() => void handlePrint()} disabled={!frameReady}>
             Print / Save PDF
           </Button>
         </DialogActions>
@@ -91,4 +96,23 @@ export function PrintDialog({ open, html, onClose }: PrintDialogProps) {
       </Snackbar>
     </>
   );
+}
+
+async function waitForImages(document: Document | null) {
+  if (!document) return;
+  const images = Array.from(document.images);
+  await Promise.all(images.map(async (image) => {
+    if (!image.complete) {
+      await new Promise<void>((resolve) => {
+        const done = () => resolve();
+        image.addEventListener("load", done, { once: true });
+        image.addEventListener("error", done, { once: true });
+        window.setTimeout(done, 3000);
+      });
+    }
+    if (typeof image.decode === "function") {
+      await image.decode().catch(() => undefined);
+    }
+  }));
+  await document.fonts?.ready;
 }

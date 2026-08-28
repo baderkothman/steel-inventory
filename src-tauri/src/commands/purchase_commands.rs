@@ -67,5 +67,5 @@ pub fn list_purchase_invoices(
 pub fn print_purchase_invoice(state: State<'_, AppState>, id: i64) -> Result<String, AppError> {
     state.require_user_id()?;
     let conn = state.open_conn()?;
-    purchase_service::purchase_invoice_html(&conn, id)
+    purchase_service::purchase_invoice_html(&conn, state.db_path(), id)
 }

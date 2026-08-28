@@ -8,8 +8,8 @@ use crate::{
 pub fn get_company_settings(conn: &Connection) -> Result<CompanySettings, AppError> {
     conn.query_row(
         "SELECT id, company_name, phone, email, address, tax_number, default_currency,
-                invoice_prefix_sales, invoice_prefix_purchase, allow_negative_stock,
-                backup_path, default_tax_rate, default_profit_method, deleted_retention_days,
+                invoice_prefix_sales, invoice_prefix_purchase, quotation_prefix, logo_path,
+                allow_negative_stock, backup_path, default_tax_rate, default_profit_method, deleted_retention_days,
                 created_at, updated_at
          FROM company_settings
          WHERE id = 1",
@@ -28,6 +28,7 @@ pub fn update_company_settings(
     required(&payload.default_currency, "Default currency")?;
     required(&payload.invoice_prefix_sales, "Sales invoice prefix")?;
     required(&payload.invoice_prefix_purchase, "Purchase invoice prefix")?;
+    required(&payload.quotation_prefix, "Quotation prefix")?;
     let currency = payload.default_currency.trim();
     if currency.len() != 3
         || !currency
@@ -54,8 +55,9 @@ pub fn update_company_settings(
         "UPDATE company_settings
          SET company_name = ?1, phone = ?2, email = ?3, address = ?4, tax_number = ?5,
              default_currency = ?6, invoice_prefix_sales = ?7, invoice_prefix_purchase = ?8,
-             allow_negative_stock = ?9, backup_path = ?10, default_tax_rate = ?11,
-             default_profit_method = ?12, deleted_retention_days = ?13, updated_at = ?14
+             quotation_prefix = ?9, allow_negative_stock = ?10, backup_path = ?11,
+             default_tax_rate = ?12, default_profit_method = ?13,
+             deleted_retention_days = ?14, updated_at = ?15
          WHERE id = 1",
         params![
             payload.company_name.trim(),
@@ -66,6 +68,7 @@ pub fn update_company_settings(
             currency.to_uppercase(),
             payload.invoice_prefix_sales.trim().to_uppercase(),
             payload.invoice_prefix_purchase.trim().to_uppercase(),
+            payload.quotation_prefix.trim().to_uppercase(),
             if payload.allow_negative_stock { 1 } else { 0 },
             payload.backup_path,
             payload.default_tax_rate,
@@ -98,12 +101,14 @@ fn map_settings(row: &rusqlite::Row<'_>) -> rusqlite::Result<CompanySettings> {
         default_currency: row.get(6)?,
         invoice_prefix_sales: row.get(7)?,
         invoice_prefix_purchase: row.get(8)?,
-        allow_negative_stock: row.get::<_, i64>(9)? == 1,
-        backup_path: row.get(10)?,
-        default_tax_rate: row.get(11)?,
-        default_profit_method: row.get(12)?,
-        deleted_retention_days: row.get(13)?,
-        created_at: row.get(14)?,
-        updated_at: row.get(15)?,
+        quotation_prefix: row.get(9)?,
+        logo_path: row.get(10)?,
+        allow_negative_stock: row.get::<_, i64>(11)? == 1,
+        backup_path: row.get(12)?,
+        default_tax_rate: row.get(13)?,
+        default_profit_method: row.get(14)?,
+        deleted_retention_days: row.get(15)?,
+        created_at: row.get(16)?,
+        updated_at: row.get(17)?,
     })
 }

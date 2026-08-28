@@ -55,6 +55,8 @@ const BUSINESS_TABLES: &[&str] = &[
     "walk_in_sales_payments",
     "payments",
     "expenses",
+    "quotation_items",
+    "quotations",
     "sales_invoice_items",
     "purchase_return_items",
     "purchase_returns",
@@ -99,6 +101,8 @@ pub fn clear_all_data(
          DELETE FROM walk_in_sales_payments;
          DELETE FROM payments;
          DELETE FROM expenses;
+         DELETE FROM quotation_items;
+         DELETE FROM quotations;
          DELETE FROM sales_invoice_items;
          DELETE FROM inventory_transactions;
          DELETE FROM purchase_return_items;
@@ -120,6 +124,7 @@ pub fn clear_all_data(
          WHERE name IN (
              'supplier_settlement_payments', 'expense_payments',
              'walk_in_sales_payments', 'payments', 'expenses',
+             'quotation_items', 'quotations',
              'sales_invoice_items', 'purchase_invoice_items', 'inventory_transactions',
              'purchase_return_items', 'purchase_returns',
              'stock_levels', 'product_prices', 'sales_invoices', 'purchase_invoices',
