@@ -377,7 +377,6 @@ pub struct QuotationPayload {
     pub discount_cents: i64,
     pub tax_cents: i64,
     pub notes: Option<String>,
-    pub terms: Option<String>,
     pub items: Vec<QuotationItemPayload>,
 }
 
@@ -404,7 +403,6 @@ pub struct QuotationListRow {
     pub status: String,
     pub converted_sales_invoice_id: Option<i64>,
     pub notes: Option<String>,
-    pub terms: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }

@@ -105,7 +105,6 @@ fn quotations_do_not_touch_stock_or_sales_and_convert_once_with_snapshot_prices(
             discount_cents: 100,
             tax_cents: 50,
             notes: Some("Historical quote".to_string()),
-            terms: Some("Valid today".to_string()),
             items: vec![QuotationItemPayload {
                 product_id: product.id,
                 quantity: 2.0,
@@ -270,7 +269,6 @@ fn quotation_conversion_rechecks_stock_and_print_is_a4_quote_not_invoice() {
             discount_cents: 0,
             tax_cents: 0,
             notes: None,
-            terms: None,
             items: vec![QuotationItemPayload {
                 product_id: product.id,
                 quantity: 5.0,
@@ -286,7 +284,7 @@ fn quotation_conversion_rechecks_stock_and_print_is_a4_quote_not_invoice() {
     std::fs::create_dir_all(&temp_root).unwrap();
     let db_path = temp_root.join("app.db");
     let html = quotation_html(&conn, &db_path, quote.quotation.id).unwrap();
-    assert!(html.contains("QUOTATION"));
+    assert!(html.contains("PRO FORMA"));
     assert!(html.contains("not an invoice, receipt, completed sale, or stock reservation"));
     assert!(html.contains("size:A4"));
     assert!(html.contains("table-layout:fixed"));

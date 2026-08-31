@@ -2,6 +2,17 @@
 
 This file consolidates the release notes that were previously stored as separate root-level documents. Only releases with preserved historical notes are listed.
 
+## 1.2.1 — 2026-09-01
+
+### Changed
+
+- Renamed the quotations area to "Pro Forma" throughout the UI (navigation, settings, form labels, and the printed document header/disclaimer).
+- Removed the "Terms and conditions" field from pro forma documents — it no longer appears on the create/edit form or the printed pro forma, and is no longer stored.
+
+### Verified
+
+- Frontend production build, Rust formatting/checks, and all 34 backend tests pass.
+
 ## 1.2.0 — 2026-08-28
 
 ### Added

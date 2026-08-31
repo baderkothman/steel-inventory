@@ -34,7 +34,7 @@ const items = [
   { to: "/customers", label: "Customers", icon: <PeopleIcon /> },
   { to: "/purchases", label: "Purchases", icon: <ReceiptLongIcon /> },
   { to: "/sales", label: "Sales Invoices", icon: <PointOfSaleIcon /> },
-  { to: "/quotations", label: "Quotations", icon: <RequestQuoteOutlinedIcon /> },
+  { to: "/quotations", label: "Pro Forma", icon: <RequestQuoteOutlinedIcon /> },
   { to: "/expenses", label: "Expenses", icon: <PaidIcon /> },
   { to: "/payments", label: "Payments", icon: <PaymentsIcon /> },
   { to: "/reports", label: "Reports", icon: <AssessmentIcon /> },

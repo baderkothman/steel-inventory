@@ -70,7 +70,6 @@ type QuotationForm = {
   discount: string;
   tax: string;
   notes: string;
-  terms: string;
   items: QuotationLineForm[];
 };
 
@@ -128,7 +127,7 @@ export function QuotationsPage() {
   const { data: settings } = useQuery({ queryKey: ["settings"], queryFn: settingsApi.get });
 
   const columns = useMemo<TableColumn<QuotationListRow>[]>(() => [
-    { id: "number", label: "Quotation", value: (row) => row.quotation_number, minWidth: 140 },
+    { id: "number", label: "Pro forma", value: (row) => row.quotation_number, minWidth: 140 },
     { id: "date", label: "Date", value: (row) => row.quotation_date, width: 110 },
     { id: "valid", label: "Valid until", value: (row) => row.valid_until, width: 110 },
     { id: "customer", label: "Customer", value: (row) => row.customer_name, minWidth: 170 },
@@ -186,7 +185,7 @@ export function QuotationsPage() {
       setConversion(null);
       setActionError(null);
       await queryClient.invalidateQueries();
-      setSuccess(`Quotation converted to sales invoice ${invoice.invoice_number}.`);
+      setSuccess(`Pro forma converted to sales invoice ${invoice.invoice_number}.`);
     },
     onError: (reason) => setActionError(normalizeError(reason).message)
   });
@@ -210,18 +209,18 @@ export function QuotationsPage() {
     }
   }
 
-  if (isLoading) return <LoadingState label="Loading quotations" />;
+  if (isLoading) return <LoadingState label="Loading pro forma invoices" />;
 
   return (
     <Stack spacing={2}>
       <PageHeader
-        title="Quotations"
-        description="Prepare price quotes without reserving stock, recording revenue, or creating a customer order."
+        title="Pro Forma"
+        description="Prepare pro forma invoices without reserving stock, recording revenue, or creating a customer order."
         actions={
           <Stack direction="row" spacing={1}>
             <TextField
               select
-              aria-label="Filter quotations by status"
+              aria-label="Filter pro forma invoices by status"
               value={statusFilter}
               onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}
               sx={{ minWidth: 150 }}
@@ -231,7 +230,7 @@ export function QuotationsPage() {
               ))}
             </TextField>
             <Button startIcon={<AddIcon />} variant="contained" onClick={() => setForm(newQuotationForm())}>
-              New quotation
+              New pro forma
             </Button>
           </Stack>
         }
@@ -240,12 +239,12 @@ export function QuotationsPage() {
       {success ? <Alert severity="success" onClose={() => setSuccess(null)}>{success}</Alert> : null}
 
       <EnterpriseTable
-        title="Customer quotations"
+        title="Customer pro forma invoices"
         rows={quotations}
         columns={columns}
         rowId={(row) => row.id}
-        emptyTitle="No quotations"
-        emptyDescription="Create a price quote when a customer wants pricing before placing an order."
+        emptyTitle="No pro forma invoices"
+        emptyDescription="Create a pro forma invoice when a customer wants pricing before placing an order."
         initialSort={{ column: "date", direction: "desc" }}
         actions={(row) => quotationActions(row, {
           edit: editQuotation,
@@ -377,11 +376,11 @@ function QuotationDialog({
 
   return (
     <Dialog open={Boolean(form)} onClose={onClose} fullWidth maxWidth="lg">
-      <DialogTitle>{form?.id ? "Edit draft quotation" : "New quotation"}</DialogTitle>
+      <DialogTitle>{form?.id ? "Edit draft pro forma" : "New pro forma"}</DialogTitle>
       <DialogContent>
         <Stack component="form" id="quotation-form" onSubmit={onSubmit} spacing={2} sx={{ pt: 1 }}>
           <Alert severity="info">
-            Saving a quotation does not reserve or reduce stock and does not appear in sales or accounting totals.
+            Saving a pro forma does not reserve or reduce stock and does not appear in sales or accounting totals.
           </Alert>
           {error ? <Alert severity="error">{error}</Alert> : null}
           <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "2fr 1fr 1fr" }, gap: 2 }}>
@@ -398,7 +397,7 @@ function QuotationDialog({
               <Button variant="outlined" onClick={onCreateCustomer} sx={{ whiteSpace: "nowrap" }}>New customer</Button>
             </Stack>
             <TextField
-              label="Quotation date"
+              label="Pro forma date"
               type="date"
               required
               value={form?.quotation_date ?? today()}
@@ -414,7 +413,7 @@ function QuotationDialog({
           </Box>
           <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr 2fr" }, gap: 2 }}>
             <TextField
-              label="Quotation number"
+              label="Pro forma number"
               value={form?.quotation_number ?? ""}
               helperText="Leave blank for automatic numbering"
               onChange={(event) => onChange(form && { ...form, quotation_number: event.target.value })}
@@ -433,7 +432,7 @@ function QuotationDialog({
           <Paper variant="outlined">
             {form?.items.length ? (
               <TableContainer sx={{ maxHeight: 380 }}>
-                <Table size="small" stickyHeader aria-label="Quotation line items">
+                <Table size="small" stickyHeader aria-label="Pro forma line items">
                   <TableHead><TableRow><TableCell>Product</TableCell><TableCell align="right">Available</TableCell><TableCell align="right">Quantity</TableCell><TableCell align="right">Unit price</TableCell><TableCell align="right">Line total</TableCell><TableCell /></TableRow></TableHead>
                   <TableBody>
                     {form.items.map((line, index) => {
@@ -484,7 +483,7 @@ function QuotationDialog({
                   </TableBody>
                 </Table>
               </TableContainer>
-            ) : <EmptyState label="Search for a product to add the first quotation line." />}
+            ) : <EmptyState label="Search for a product to add the first pro forma line." />}
           </Paper>
 
           <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr 1fr 1.2fr" }, gap: 2 }}>
@@ -511,13 +510,12 @@ function QuotationDialog({
             </Paper>
           </Box>
           <TextField label="Notes" multiline minRows={2} value={form?.notes ?? ""} onChange={(event) => onChange(form && { ...form, notes: event.target.value })} />
-          <TextField label="Terms and conditions" multiline minRows={3} value={form?.terms ?? ""} onChange={(event) => onChange(form && { ...form, terms: event.target.value })} />
         </Stack>
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>
         <Button type="submit" form="quotation-form" variant="contained" disabled={saving || !form?.items.length || !form?.customer_id}>
-          Save quotation
+          Save pro forma
         </Button>
       </DialogActions>
     </Dialog>
@@ -580,7 +578,7 @@ function ConversionDialog({ form, error, saving, onChange, onClose, onSubmit }: 
 }) {
   return (
     <Dialog open={Boolean(form)} onClose={onClose} fullWidth maxWidth="sm">
-      <DialogTitle>Convert quotation to sales invoice</DialogTitle>
+      <DialogTitle>Convert pro forma to sales invoice</DialogTitle>
       <DialogContent>
         <Stack component="form" id="convert-quotation-form" onSubmit={onSubmit} spacing={2} sx={{ pt: 1 }}>
           <Alert severity="warning">
@@ -605,19 +603,19 @@ function quotationActions(row: QuotationListRow, handlers: {
   setAction: (action: PendingAction) => void;
   convert: () => void;
 }) {
-  const actions: RowAction<QuotationListRow>[] = [{ label: "Print quotation", icon: <PrintIcon fontSize="small" />, onClick: () => void handlers.print(row.id) }];
+  const actions: RowAction<QuotationListRow>[] = [{ label: "Print pro forma", icon: <PrintIcon fontSize="small" />, onClick: () => void handlers.print(row.id) }];
   if (row.status === "draft") {
     actions.unshift({ label: "Edit draft", icon: <EditIcon fontSize="small" />, onClick: () => void handlers.edit(row.id) });
-    actions.push({ label: "Mark as sent", icon: <SendOutlinedIcon fontSize="small" />, onClick: () => handlers.setAction({ id: row.id, status: "sent", kind: "status", title: "Mark quotation as sent", message: "This locks quoted values from editing and records that the quote was sent to the customer.", confirmLabel: "Mark sent" }) });
-    actions.push({ label: "Delete draft", icon: <DeleteIcon fontSize="small" />, destructive: true, onClick: () => handlers.setAction({ id: row.id, kind: "delete", title: "Delete draft quotation", message: "This permanently deletes the unsent draft. This action cannot be undone.", confirmLabel: "Delete draft" }) });
+    actions.push({ label: "Mark as sent", icon: <SendOutlinedIcon fontSize="small" />, onClick: () => handlers.setAction({ id: row.id, status: "sent", kind: "status", title: "Mark pro forma as sent", message: "This locks quoted values from editing and records that the pro forma was sent to the customer.", confirmLabel: "Mark sent" }) });
+    actions.push({ label: "Delete draft", icon: <DeleteIcon fontSize="small" />, destructive: true, onClick: () => handlers.setAction({ id: row.id, kind: "delete", title: "Delete draft pro forma", message: "This permanently deletes the unsent draft. This action cannot be undone.", confirmLabel: "Delete draft" }) });
   }
   if (row.status === "sent") {
-    actions.push({ label: "Mark accepted", icon: <CheckCircleOutlineIcon fontSize="small" />, onClick: () => handlers.setAction({ id: row.id, status: "accepted", kind: "status", title: "Accept quotation", message: "Confirm that the customer accepted this quotation. It can then be converted to a real sales invoice.", confirmLabel: "Mark accepted" }) });
-    actions.push({ label: "Mark rejected", icon: <ThumbDownOutlinedIcon fontSize="small" />, destructive: true, onClick: () => handlers.setAction({ id: row.id, status: "rejected", kind: "status", title: "Reject quotation", message: "Mark this quotation as rejected while preserving its history.", confirmLabel: "Mark rejected" }) });
+    actions.push({ label: "Mark accepted", icon: <CheckCircleOutlineIcon fontSize="small" />, onClick: () => handlers.setAction({ id: row.id, status: "accepted", kind: "status", title: "Accept pro forma", message: "Confirm that the customer accepted this pro forma. It can then be converted to a real sales invoice.", confirmLabel: "Mark accepted" }) });
+    actions.push({ label: "Mark rejected", icon: <ThumbDownOutlinedIcon fontSize="small" />, destructive: true, onClick: () => handlers.setAction({ id: row.id, status: "rejected", kind: "status", title: "Reject pro forma", message: "Mark this pro forma as rejected while preserving its history.", confirmLabel: "Mark rejected" }) });
   }
   if (row.status === "accepted") {
     actions.push({ label: "Convert to sales invoice", icon: <ShoppingCartCheckoutIcon fontSize="small" />, onClick: handlers.convert });
-    actions.push({ label: "Mark rejected", icon: <ThumbDownOutlinedIcon fontSize="small" />, destructive: true, onClick: () => handlers.setAction({ id: row.id, status: "rejected", kind: "status", title: "Reject accepted quotation", message: "Use this when the customer withdrew acceptance. The historical quote will remain available.", confirmLabel: "Mark rejected" }) });
+    actions.push({ label: "Mark rejected", icon: <ThumbDownOutlinedIcon fontSize="small" />, destructive: true, onClick: () => handlers.setAction({ id: row.id, status: "rejected", kind: "status", title: "Reject accepted pro forma", message: "Use this when the customer withdrew acceptance. The historical pro forma will remain available.", confirmLabel: "Mark rejected" }) });
   }
   return actions;
 }
@@ -631,7 +629,6 @@ function newQuotationForm(): QuotationForm {
     discount: "0.00",
     tax: "0.00",
     notes: "",
-    terms: "Prices are valid until the date shown above. Availability and delivery timing are confirmed when an order is placed.",
     items: []
   };
 }
@@ -646,7 +643,6 @@ function detailToForm(detail: QuotationDetail): QuotationForm {
     discount: fromCents(detail.quotation.discount_cents),
     tax: fromCents(detail.quotation.tax_cents),
     notes: detail.quotation.notes ?? "",
-    terms: detail.quotation.terms ?? "",
     items: detail.items.map((item) => ({
       line_id: `quotation-item-${item.id}`,
       product_id: item.product_id ?? 0,
@@ -665,7 +661,6 @@ function formToPayload(form: QuotationForm): QuotationPayload {
     discount_cents: toCents(form.discount),
     tax_cents: toCents(form.tax),
     notes: form.notes || null,
-    terms: form.terms || null,
     items: form.items.map((item) => ({
       product_id: item.product_id,
       quantity: Number(item.quantity),

@@ -170,7 +170,7 @@ export function SettingsPage() {
           />
           <TextField label="Sales invoice prefix" value={form.invoice_prefix_sales} onChange={(e) => setForm({ ...form, invoice_prefix_sales: e.target.value.toUpperCase() })} />
           <TextField label="Purchase invoice prefix" value={form.invoice_prefix_purchase} onChange={(e) => setForm({ ...form, invoice_prefix_purchase: e.target.value.toUpperCase() })} />
-          <TextField label="Quotation prefix" value={form.quotation_prefix} onChange={(e) => setForm({ ...form, quotation_prefix: e.target.value.toUpperCase() })} />
+          <TextField label="Pro forma prefix" value={form.quotation_prefix} onChange={(e) => setForm({ ...form, quotation_prefix: e.target.value.toUpperCase() })} />
           <TextField label="Default tax value" type="number" value={form.default_tax_rate} onChange={(e) => setForm({ ...form, default_tax_rate: Number(e.target.value) })} />
           <TextField label="Profit calculation method" value={form.default_profit_method} onChange={(e) => setForm({ ...form, default_profit_method: e.target.value })} />
           <TextField label="Backup path" value={form.backup_path ?? ""} onChange={(e) => setForm({ ...form, backup_path: e.target.value })} />
@@ -336,7 +336,7 @@ function CompanyLogoEditor() {
         <Box sx={{ flex: 1 }}>
           <Typography variant="subtitle2">Company logo</Typography>
           <Typography variant="caption" color="text.secondary">
-            Used on professional quotation printouts. PNG, JPEG, or WebP up to 2 MB.
+            Used on professional pro forma printouts. PNG, JPEG, or WebP up to 2 MB.
           </Typography>
           {error ? <Alert severity="error" sx={{ mt: 1 }}>{error}</Alert> : null}
           <Stack direction="row" spacing={1} sx={{ mt: 1 }}>

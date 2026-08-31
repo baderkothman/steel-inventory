@@ -67,9 +67,9 @@ pub fn create_quotation(
          (customer_id, quotation_number, quotation_date, valid_until,
           customer_name, customer_company_name, customer_phone, customer_email,
           customer_address, customer_tax_number, subtotal_cents, discount_cents,
-          tax_cents, total_cents, notes, terms, status, created_by, created_at, updated_at)
+          tax_cents, total_cents, notes, status, created_by, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                 ?15, ?16, 'draft', ?17, ?18, ?18)",
+                 ?15, 'draft', ?16, ?17, ?17)",
         params![
             customer.id,
             quotation_number,
@@ -86,7 +86,6 @@ pub fn create_quotation(
             payload.tax_cents,
             total,
             normalize_optional(payload.notes),
-            normalize_optional(payload.terms),
             user_id,
             now
         ],
@@ -141,8 +140,8 @@ pub fn update_quotation(
              customer_name = ?5, customer_company_name = ?6, customer_phone = ?7,
              customer_email = ?8, customer_address = ?9, customer_tax_number = ?10,
              subtotal_cents = ?11, discount_cents = ?12, tax_cents = ?13, total_cents = ?14,
-             notes = ?15, terms = ?16, updated_at = ?17
-         WHERE id = ?18 AND status = 'draft'",
+             notes = ?15, updated_at = ?16
+         WHERE id = ?17 AND status = 'draft'",
         params![
             customer.id,
             quotation_number,
@@ -159,7 +158,6 @@ pub fn update_quotation(
             payload.tax_cents,
             total,
             normalize_optional(payload.notes),
-            normalize_optional(payload.terms),
             now,
             id
         ],
@@ -200,7 +198,7 @@ pub fn list_quotations(
     let mut stmt = conn.prepare(
         "SELECT id, customer_id, quotation_number, quotation_date, valid_until, customer_name,
                 subtotal_cents, discount_cents, tax_cents, total_cents, status,
-                converted_sales_invoice_id, notes, terms, created_at, updated_at
+                converted_sales_invoice_id, notes, created_at, updated_at
          FROM quotations
          WHERE (?1 IS NULL OR quotation_number LIKE '%' || ?1 || '%'
                           OR customer_name LIKE '%' || ?1 || '%'
@@ -226,7 +224,7 @@ pub fn get_quotation(conn: &Connection, id: i64) -> Result<QuotationDetail, AppE
         .query_row(
             "SELECT id, customer_id, quotation_number, quotation_date, valid_until, customer_name,
                     subtotal_cents, discount_cents, tax_cents, total_cents, status,
-                    converted_sales_invoice_id, notes, terms, created_at, updated_at,
+                    converted_sales_invoice_id, notes, created_at, updated_at,
                     customer_company_name, customer_phone, customer_email, customer_address,
                     customer_tax_number
              FROM quotations WHERE id = ?1",
@@ -234,11 +232,11 @@ pub fn get_quotation(conn: &Connection, id: i64) -> Result<QuotationDetail, AppE
             |row| {
                 Ok((
                     map_list_row(row)?,
+                    row.get(15)?,
                     row.get(16)?,
                     row.get(17)?,
                     row.get(18)?,
                     row.get(19)?,
-                    row.get(20)?,
                 ))
             },
         )
@@ -535,27 +533,25 @@ pub fn quotation_html(conn: &Connection, db_path: &Path, id: i64) -> Result<Stri
         .map(|value| format!("<div>Tax / VAT: {}</div>", escape(value)))
         .unwrap_or_default();
     let notes = optional_section("Notes", detail.quotation.notes.as_deref());
-    let terms = optional_section("Terms and conditions", detail.quotation.terms.as_deref());
     let currency = escape(&settings.default_currency);
     Ok(format!(
         r#"<!doctype html>
-<html><head><meta charset="utf-8"><title>Quotation {number}</title>
+<html><head><meta charset="utf-8"><title>Pro Forma {number}</title>
 <style>
 *{{box-sizing:border-box}}html{{background:#fff}}body{{font-family:Inter,"Segoe UI",Arial,sans-serif;color:#16202a;margin:0;font-size:11px;line-height:1.45}}.sheet{{max-width:210mm;margin:0 auto;padding:12mm 13mm 16mm}}.top{{display:flex;justify-content:space-between;align-items:flex-start;gap:12mm;padding-bottom:8mm;border-bottom:2px solid #245a61}}.brand{{display:flex;gap:5mm;min-width:0;align-items:flex-start}}.logo,.logo-fallback{{width:25mm;height:25mm;flex:0 0 25mm;object-fit:contain}}.logo-fallback{{display:grid;place-items:center;border:1px solid #aebdc2;color:#245a61;font-size:16px;font-weight:800;letter-spacing:.06em}}.company{{min-width:0}}.company h1{{margin:0;font-size:20px;line-height:1.15;overflow-wrap:anywhere}}.muted{{color:#5b6773;margin-top:2px}}.doc{{text-align:right;flex:0 0 54mm}}.doc .eyebrow{{color:#1f6f78;font-size:9px;font-weight:800;letter-spacing:.15em;text-transform:uppercase}}.doc h2{{margin:2px 0 5px;font-size:24px;line-height:1;letter-spacing:-.03em}}.doc dl{{display:grid;grid-template-columns:auto auto;gap:2px 10px;justify-content:end;margin:0}}.doc dt{{color:#687680}}.doc dd{{margin:0;font-weight:700}}.status{{display:inline-block;margin-top:5px;padding:2px 7px;border:1px solid #88a1a7;text-transform:capitalize;font-size:9px;font-weight:700}}.customer{{display:grid;grid-template-columns:1fr 1fr;gap:10mm;margin:8mm 0}}.customer h3,.section h3{{margin:0 0 2mm;color:#456069;font-size:9px;letter-spacing:.12em;text-transform:uppercase}}.customer strong{{font-size:13px}}table{{width:100%;border-collapse:collapse;table-layout:fixed}}thead{{display:table-header-group}}tr{{break-inside:avoid;page-break-inside:avoid}}th,td{{padding:7px 8px;border-bottom:1px solid #d8e1e5;text-align:left;vertical-align:top;overflow-wrap:anywhere}}th{{background:#e9f0f1;color:#20383c;font-size:9px;letter-spacing:.04em;text-transform:uppercase}}th:nth-child(1){{width:7%}}th:nth-child(2){{width:49%}}th:nth-child(3){{width:12%}}th:nth-child(4),th:nth-child(5){{width:16%}}td small{{display:block;color:#687680;margin-top:2px}}.num{{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}}.summary{{display:grid;grid-template-columns:minmax(0,1fr) 72mm;gap:12mm;margin-top:7mm;align-items:start}}.totals{{break-inside:avoid;page-break-inside:avoid}}.totals div{{display:flex;justify-content:space-between;gap:10mm;padding:4px 0;border-bottom:1px solid #e2e8eb}}.totals .grand{{margin-top:2px;padding:7px 0;border-top:2px solid #245a61;border-bottom:0;font-size:14px;font-weight:800}}.currency{{color:#687680;font-size:9px;margin-left:3px}}.section{{margin-top:6mm;break-inside:avoid;page-break-inside:avoid}}.section p{{margin:0;white-space:normal;overflow-wrap:anywhere}}.notice{{margin-top:8mm;padding:4mm;border:1px solid #9bb0b5;background:#f4f7f8;font-weight:700;text-align:center}}footer{{margin-top:10mm;padding-top:3mm;border-top:1px solid #cfdadd;color:#687680;font-size:9px}}@page{{size:A4;margin:12mm 13mm 16mm}}@media print{{body{{margin:0}}.sheet{{max-width:none;padding:0}}button{{display:none}}footer{{position:running(quoteFooter)}}}}@media (max-width:700px){{.top,.customer,.summary{{grid-template-columns:1fr;display:grid}}.doc{{text-align:left}}.doc dl{{justify-content:start}}}}
 </style></head><body><main class="sheet">
-<header class="top"><div class="brand">{logo}<div class="company"><h1>{company}</h1><div class="muted">{contact}</div>{company_tax}</div></div><div class="doc"><div class="eyebrow">Price quote</div><h2>QUOTATION</h2><dl><dt>Quote no.</dt><dd>{number}</dd><dt>Date</dt><dd>{date}</dd><dt>Valid until</dt><dd>{valid_until}</dd></dl><div class="status">{status}</div></div></header>
+<header class="top"><div class="brand">{logo}<div class="company"><h1>{company}</h1><div class="muted">{contact}</div>{company_tax}</div></div><div class="doc"><div class="eyebrow">Pro forma</div><h2>PRO FORMA</h2><dl><dt>Pro forma no.</dt><dd>{number}</dd><dt>Date</dt><dd>{date}</dd></dl><div class="status">{status}</div></div></header>
 <section class="customer"><div><h3>Prepared for</h3><strong>{customer}</strong>{customer_company}{customer_tax}</div><div><h3>Customer contact</h3><div>{customer_contact}</div></div></section>
 <table><thead><tr><th>#</th><th>Product / SKU</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Line total</th></tr></thead><tbody>{rows}</tbody></table>
-<div class="summary"><div>{notes}{terms}</div><div class="totals"><div><span>Subtotal</span><span>{subtotal} <span class="currency">{currency}</span></span></div><div><span>Discount</span><span>- {discount}</span></div><div><span>Tax / VAT</span><span>{tax}</span></div><div class="grand"><span>Quoted total</span><span>{total} <span class="currency">{currency}</span></span></div></div></div>
-<div class="notice">This document is a quotation only. It is not an invoice, receipt, completed sale, or stock reservation.</div>
-<footer>{company} · Quotation {number}</footer></main></body></html>"#,
+<div class="summary"><div>{notes}</div><div class="totals"><div><span>Subtotal</span><span>{subtotal} <span class="currency">{currency}</span></span></div><div><span>Discount</span><span>- {discount}</span></div><div><span>Tax / VAT</span><span>{tax}</span></div><div class="grand"><span>Quoted total</span><span>{total} <span class="currency">{currency}</span></span></div></div></div>
+<div class="notice">This document is a pro forma only. It is not an invoice, receipt, completed sale, or stock reservation.</div>
+<footer>{company} · Pro Forma {number}</footer></main></body></html>"#,
         logo = logo,
         company = escape(&settings.company_name),
         contact = contact,
         company_tax = company_tax,
         number = escape(&detail.quotation.quotation_number),
         date = escape(&detail.quotation.quotation_date),
-        valid_until = escape(&detail.quotation.valid_until),
         status = escape(&detail.quotation.status),
         customer = escape(&detail.quotation.customer_name),
         customer_company = customer_company,
@@ -567,7 +563,6 @@ pub fn quotation_html(conn: &Connection, db_path: &Path, id: i64) -> Result<Stri
         },
         rows = rows,
         notes = notes,
-        terms = terms,
         subtotal = money(detail.quotation.subtotal_cents),
         discount = money(detail.quotation.discount_cents),
         tax = money(detail.quotation.tax_cents),
@@ -776,9 +771,8 @@ fn map_list_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QuotationListRow> {
         status: row.get(10)?,
         converted_sales_invoice_id: row.get(11)?,
         notes: row.get(12)?,
-        terms: row.get(13)?,
-        created_at: row.get(14)?,
-        updated_at: row.get(15)?,
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
     })
 }
 

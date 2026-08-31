@@ -20,7 +20,6 @@ export type QuotationPayload = {
   discount_cents: number;
   tax_cents: number;
   notes?: string | null;
-  terms?: string | null;
   items: QuotationItemPayload[];
 };
 
@@ -45,7 +44,6 @@ export type QuotationListRow = {
   status: QuotationStatus;
   converted_sales_invoice_id?: number | null;
   notes?: string | null;
-  terms?: string | null;
   created_at: string;
   updated_at: string;
 };

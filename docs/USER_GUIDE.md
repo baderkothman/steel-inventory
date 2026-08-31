@@ -96,7 +96,7 @@ If negative stock is disabled, a sale or restoration that exceeds current stock 
 
 Use Quotations when a customer wants prices before placing an order. Select or quickly create a
 customer, search products by name or SKU, enter quantities and quoted unit prices, then set the
-valid-until date, discount, tax/VAT, notes, and terms.
+valid-until date, discount, tax/VAT, and notes.
 
 Saving creates a Draft only. It does not reserve or reduce stock, create a sale or payment, change
 customer balances, or appear in revenue and sales reports. Mark the quote Sent, then Accepted or
@@ -109,7 +109,7 @@ then uses the normal sales flow. The quote is marked Converted and linked to the
 the same quote cannot be converted twice.
 
 The A4 quotation printout includes the company logo/contact details, customer details, itemized
-pricing, totals, notes, terms, validity date, status, and a clear statement that it is not an invoice,
+pricing, totals, notes, validity date, status, and a clear statement that it is not an invoice,
 receipt, completed sale, or stock reservation.
 
 ## Expenses and payments
