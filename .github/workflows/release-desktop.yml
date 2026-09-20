@@ -1,4 +1,4 @@
-name: Release macOS
+name: Release desktop
 
 on:
   push:
@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-macos-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  group: release-desktop-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -24,9 +24,26 @@ env:
 
 jobs:
   publish:
-    name: Build and publish universal macOS app
-    runs-on: macos-latest
+    name: Build and publish ${{ matrix.name }}
+    runs-on: ${{ matrix.platform }}
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      # tauri-action updates one shared latest.json release asset. Publishing the
+      # platforms serially avoids concurrent delete/upload races for that file.
+      max-parallel: 1
+      matrix:
+        include:
+          - name: universal macOS app
+            platform: macos-latest
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+            args: >-
+              --target universal-apple-darwin
+              --config '{"bundle":{"macOS":{"signingIdentity":"-"}}}'
+          - name: Windows x64 installer
+            platform: windows-latest
+            rust_targets: x86_64-pc-windows-msvc
+            args: --target x86_64-pc-windows-msvc --bundles nsis
 
     steps:
       - name: Validate release tag
@@ -64,7 +81,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: ${{ matrix.rust_targets }}
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -85,7 +102,7 @@ jobs:
             exit 1
           fi
 
-      - name: Build, sign, and publish macOS release
+      - name: Build, sign, and publish desktop release
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -94,11 +111,10 @@ jobs:
         with:
           tagName: ${{ env.RELEASE_TAG }}
           releaseName: "Steel Inventory ${{ env.RELEASE_TAG }}"
-          releaseBody: "For the first installation, open the DMG and drag Steel Inventory into Applications before launching it. Do not run the app from the DMG. Existing updater-enabled installations can install this release from inside the app."
+          releaseBody: "Windows: download and run the x64 setup executable. macOS: open the DMG and drag Steel Inventory into Applications before launching it; do not run the app from the DMG. Existing updater-enabled installations on either platform can install this release from inside the app."
           releaseDraft: false
           prerelease: false
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
-          args: >-
-            --target universal-apple-darwin
-            --config '{"bundle":{"macOS":{"signingIdentity":"-"}}}'
+          updaterJsonPreferNsis: true
+          args: ${{ matrix.args }}

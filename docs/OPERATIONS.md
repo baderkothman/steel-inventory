@@ -2,7 +2,15 @@
 
 ## Supported release channel
 
-The automated release channel produces a universal macOS DMG and updater archive for Apple Silicon and Intel Macs. The source contains general Tauri bundle configuration, but Windows and Linux installers are not built or verified by the committed workflow.
+The automated release channel produces a Windows x64 NSIS setup executable and a universal macOS DMG for Apple Silicon and Intel Macs. It also publishes signed updater artifacts for both platforms. Linux installers are not built or verified by the committed workflow.
+
+## First installation on Windows
+
+1. Download the Windows x64 setup executable from the GitHub Release.
+2. Run the installer and follow its prompts.
+3. Launch Steel Inventory from the Start menu.
+
+The Windows installer is not currently Authenticode-signed, so Windows may show an unknown-publisher warning on first installation.
 
 ## First installation on macOS
 
@@ -91,6 +99,7 @@ Before a release or after recovery:
 - Single local administrator; no per-user permissions or remote sign-in
 - No cloud synchronization or shared multi-device database
 - No background purge based on the retention setting
-- Current automated distribution is macOS only
-- Current macOS release is ad-hoc signed and not notarized
+- Automated distribution supports Windows x64 and universal macOS, but not Linux
+- The Windows installer is not Authenticode-signed
+- The macOS release is ad-hoc signed and not notarized
 - Backups are local files and must be copied off-device for hardware-loss protection

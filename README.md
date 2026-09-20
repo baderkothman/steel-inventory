@@ -21,7 +21,7 @@ Current application version: `1.2.1`.
 - React 19, TypeScript, Material UI, and TanStack Query for the frontend
 - SQLite through bundled `rusqlite`
 - Vite for frontend development and builds
-- GitHub Actions for universal macOS releases and signed updater artifacts
+- GitHub Actions for Windows x64 and universal macOS releases with signed updater artifacts
 
 ## Quick start
 
@@ -69,4 +69,4 @@ npm run tauri:build
 
 ## Distribution status
 
-The committed release workflow publishes a universal macOS application for Apple Silicon and Intel Macs. Windows and Linux source compatibility is not the same as a tested release channel; the current workflow does not publish installers for them.
+The committed release workflow publishes a Windows x64 NSIS installer and a universal macOS application for Apple Silicon and Intel Macs. Linux source compatibility is not the same as a tested release channel; the current workflow does not publish Linux installers.

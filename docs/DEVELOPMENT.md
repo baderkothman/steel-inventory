@@ -112,11 +112,11 @@ The application version must match in:
 - `src-tauri/Cargo.toml` and `src-tauri/Cargo.lock`
 - `src-tauri/tauri.conf.json`
 
-Update `CHANGELOG.md`, commit the release, and create a semver tag such as `v1.0.12`. Pushing a `v*` tag runs `.github/workflows/release-desktop.yml`. The workflow verifies that the tag matches `tauri.conf.json`, builds a universal Apple Silicon/Intel macOS bundle, signs updater artifacts, and publishes the GitHub Release.
+Update `CHANGELOG.md`, commit the release, and create a semver tag such as `v1.0.12`. Pushing a `v*` tag runs `.github/workflows/release-desktop.yml`. The workflow verifies that the tag matches `tauri.conf.json`, builds a Windows x64 NSIS installer and a universal Apple Silicon/Intel macOS bundle, signs updater artifacts, and publishes both platform builds to the same GitHub Release.
 
-The repository secret `TAURI_SIGNING_PRIVATE_KEY` must contain the updater private key. The corresponding public key is committed in `tauri.conf.json`. Never commit the private key. The workflow currently uses ad-hoc macOS code signing; notarization is not configured.
+The repository secret `TAURI_SIGNING_PRIVATE_KEY` must contain the updater private key. The corresponding public key is committed in `tauri.conf.json`. Never commit the private key. The workflow signs the updater artifacts on both platforms, but the Windows installer itself is not Authenticode-signed and the macOS app uses ad-hoc signing; macOS notarization is not configured.
 
-The workflow may also be dispatched manually for an existing release tag. It does not currently publish Windows or Linux installers.
+The workflow may also be dispatched manually for an existing release tag. A complete release requires both its Windows and macOS jobs to succeed. It does not currently publish Linux installers.
 
 ## Documentation policy
 
